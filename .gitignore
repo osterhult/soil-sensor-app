@@ -1,0 +1,20 @@
+# --- generellt ---
+*.log
+*.tmp
+.DS_Store
+
+# --- Zephyr/NCS & west ---
+build/
+zephyr/zephyr.elf
+twister-out/
+modules/
+
+# ---- Matter SDK -------------------------------------------------
+connectedhomeip
+
+# --- VS Code lokalt ---
+.vscode/*
+!.vscode/tasks.json # behåll ev. arbetsflödesfiler
+
+# --- Python virtualenvs ---
+.venv/
