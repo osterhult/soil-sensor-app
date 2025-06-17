@@ -1,1 +1,6 @@
 /build/
+
+# --- generellt ---
+*.log
+*.tmp
+.DS_Store
