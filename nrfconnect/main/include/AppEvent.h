@@ -1,6 +1,5 @@
 /*
- *
- *    Copyright (c) 2018 Nest Labs, Inc.
+ *    Copyright (c) 2022 Project CHIP Authors
  *    All rights reserved.
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,7 +31,6 @@ enum class AppEventType : uint8_t
     ButtonReleased,
     Timer,
     UpdateLedState,
-    Lighting,
     IdentifyStart,
     IdentifyStop,
 };
@@ -62,7 +60,7 @@ struct AppEvent
         {
             uint8_t Action;
             int32_t Actor;
-        } LightingEvent;
+        } LockEvent;
         struct
         {
             LEDWidget * LedWidget;

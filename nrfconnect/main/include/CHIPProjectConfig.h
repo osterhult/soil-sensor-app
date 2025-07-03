@@ -1,6 +1,5 @@
 /*
- *
- *    Copyright (c) 2020 Project CHIP Authors
+ *    Copyright (c) 2022 Project CHIP Authors
  *    All rights reserved.
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,9 +26,8 @@
 
 #pragma once
 
-#define CHIP_CONFIG_LOG_MODULE_Zcl_PROGRESS 0
-#define CHIP_CONFIG_LOG_MODULE_InteractionModel_PROGRESS 0
-#define CHIP_CONFIG_LOG_MODULE_InteractionModel_DETAIL 0
-#define CHIP_CONFIG_LOG_MODULE_DataManagement_PROGRESS 0
-#define CHIP_CONFIG_LOG_MODULE_FabricProvisioning_PROGRESS 0
-#define CHIP_CONFIG_LOG_MODULE_SecureChannel_PROGRESS 0
+// All clusters app has 3 group endpoints. This needs to defined here so that
+// CHIP_CONFIG_MAX_GROUPS_PER_FABRIC is properly configured.
+#define CHIP_CONFIG_MAX_GROUP_ENDPOINTS_PER_FABRIC 3
+
+#define CHIP_CONFIG_ENABLE_ACL_EXTENSIONS 1

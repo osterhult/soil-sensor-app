@@ -7,7 +7,7 @@
 #include <app/server/Server.h>
 #include <lib/core/CHIPError.h>
 #include <platform/PlatformManager.h>
-#include <app/clusters/SoilMeasurement/SoilMeasurement.h>
+//#include <app/clusters/SoilMeasurement/SoilMeasurement.h>
 
 class SoilSensorManager
 {
