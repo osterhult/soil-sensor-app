@@ -32,11 +32,11 @@ include(${CHIP_ROOT}/src/app/chip_data_model.cmake)
 
 
 target_sources(app PRIVATE
-  main/main.cpp
-  main/soil_sensor.cpp
-  main/soil_measurement_access.cpp
-  main/AppTask.cpp
+    main/main.cpp
+    main/SoilSensormanager.cpp
+    main/soil_measurement_nrf.cpp
 )
+
 
 target_include_directories(app PRIVATE
   main/include
@@ -45,8 +45,10 @@ target_include_directories(app PRIVATE
   ${SOILSENSOR_COMMON}
 #  ${CMAKE_BINARY_DIR}/nrfconnect/gen/app-zapgen/zapgen/app-templates/zap-generated
   ${CMAKE_BINARY_DIR}/nrfconnect/gen/app-zapgen/zapgen/app-templates/zap-generated/app-common
+  ${CHIP_ROOT}/src
 )
 
+#set(PM_STATIC_YML ${CMAKE_CURRENT_SOURCE_DIR}/pm_static_nrf7002dk_nrf5340_cpuapp_dfu.yml)
 set(PM_STATIC_YML ${CMAKE_CURRENT_SOURCE_DIR}/pm_static.yml)
 
 
@@ -58,13 +60,6 @@ set(GEN_CERTS TRUE) # eller 1
 
 #set(ZCL_PATH ${CHIP_ROOT}/src/app/zap-templates/zcl/zcl.json)
 set(ZCL_JSON ${CHIP_ROOT}/src/app/zap-templates/zcl/zcl-with-test-extensions.json)
-
-# chip_configure_data_model(app
-#   ZAP_FILE  ${SOILSENSOR_COMMON}/soil-sensor-app.zap
-#   # Anything after ZAP_ARGS is forwarded verbatim to generate.py
-#   #ZAP_ARGS  --zcl ${ZCL_JSON}
-#   ZAP_ARGS --zcl ${ZCL_PATH}
-# )
 
 chip_configure_data_model(app
   ZAP_FILE  ${SOILSENSOR_COMMON}/soil-sensor-app.zap

@@ -1,70 +1,38 @@
 /*
- *    Copyright (c) 2022 Project CHIP Authors
- *    All rights reserved.
- *
- *    Licensed under the Apache License, Version 2.0 (the "License");
- *    you may not use this file except in compliance with the License.
- *    You may obtain a copy of the License at
- *
- *        http://www.apache.org/licenses/LICENSE-2.0
- *
- *    Unless required by applicable law or agreed to in writing, software
- *    distributed under the License is distributed on an "AS IS" BASIS,
- *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *    See the License for the specific language governing permissions and
- *    limitations under the License.
+ * Minimal Matter server bootstrap + soil sensor start-up (no stub dependencies)
  */
 
-#include "AppTask.h"
+#include <app/server/Server.h>            // init params are available from this header in your tree
+#include <platform/CHIPDeviceLayer.h>
+#include <lib/support/logging/CHIPLogging.h>
 
-#include <zephyr/logging/log.h>
+using namespace chip;
+using namespace chip::DeviceLayer;
 
-#if DT_NODE_HAS_COMPAT(DT_CHOSEN(zephyr_console), zephyr_cdc_acm_uart)
-#include <zephyr/drivers/uart.h>
-#include <zephyr/usb/usb_device.h>
-#endif
-
-LOG_MODULE_REGISTER(app, CONFIG_CHIP_APP_LOG_LEVEL);
-
-using namespace ::chip;
-
-#if DT_NODE_HAS_COMPAT(DT_CHOSEN(zephyr_console), zephyr_cdc_acm_uart)
-static int InitUSB()
-{
-    int err = usb_enable(nullptr);
-
-    if ((err != 0) && (err != -EALREADY))
-    {
-        LOG_ERR("Failed to initialize USB device %d", err);
-        return err;
-    }
-
-    const struct device * dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
-    uint32_t dtr              = 0;
-
-    while (!dtr)
-    {
-        uart_line_ctrl_get(dev, UART_LINE_CTRL_DTR, &dtr);
-        k_sleep(K_MSEC(100));
-    }
-
-    return 0;
-}
-#endif
+// Provided by soil_measurement_nrf.cpp
+extern "C" CHIP_ERROR InitSoilSensor();
+extern "C" void       StartMeasurementLoop();
 
 int main()
 {
-    CHIP_ERROR err = CHIP_NO_ERROR;
+    // Initialize CHIP stack
+    VerifyOrDie(PlatformMgr().InitChipStack() == CHIP_NO_ERROR);
 
-#if DT_NODE_HAS_COMPAT(DT_CHOSEN(zephyr_console), zephyr_cdc_acm_uart)
-    err = System::MapErrorZephyr(InitUSB());
-#endif
+    // Prefer CommonCaseDeviceServerInitParams if available, else fall back to ServerInitParams
+    #if defined(CHIP_DEVICE_LAYER_TARGET_NRFCONNECT) && defined(CHIP_CONFIG_KVS_PATH) \
+        && !defined(CHIP_SERVER_NO_COMMON_CASE) /* heuristic: common in newer trees */
+        // Newer trees keep CommonCaseDeviceServerInitParams inside Server.h
+        chip::CommonCaseDeviceServerInitParams initParams;
+        (void) initParams.InitializeStaticResourcesBeforeServerInit();
+    #else
+        chip::ServerInitParams initParams;
+    #endif
 
-    if (err == CHIP_NO_ERROR)
-    {
-        err = AppTask::Instance().StartApp();
-    }
+    VerifyOrDie(Server::GetInstance().Init(initParams) == CHIP_NO_ERROR);
 
-    LOG_ERR("Exited with code %" CHIP_ERROR_FORMAT, err.Format());
-    return err == CHIP_NO_ERROR ? EXIT_SUCCESS : EXIT_FAILURE;
+    VerifyOrDie(InitSoilSensor() == CHIP_NO_ERROR);
+    StartMeasurementLoop();
+
+    PlatformMgr().RunEventLoop();
+    return 0;
 }
