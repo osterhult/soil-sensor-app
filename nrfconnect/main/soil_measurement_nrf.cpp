@@ -1,231 +1,151 @@
-// // main/soil_measurement_nrf.cpp
-// #include <app/util/attribute-storage.h>
-// #include <app/reporting/reporting.h>
-// #include <platform/CHIPDeviceLayer.h>
-// #include <zephyr/kernel.h>
+// nrfconnect/main/soil_measurement_nrf.cpp
+//
+// Simple SoilMeasurement reader using AttributeAccessInterface.
+// No Attributes::<...>::Set(...) calls -> avoids all the Set/MarkAttributeDirty issues.
 
-// // Generated headers for the SoilMeasurement cluster in 1.5
-// #include <clusters/SoilMeasurement/Metadata.h>
-
-// #include "include/SoilSensorManager.h"
-
-// using namespace chip;
-// using namespace chip::app;
-// using namespace chip::app::Clusters;
-// using namespace chip::DeviceLayer;
-
-// namespace {
-// constexpr EndpointId kEndpoint = 1;
-// constexpr uint32_t kUpdateMs = 2000;
-
-// SoilSensorManager gSensor;
-
-// // The generated per-endpoint server wrapper for 0x0430 in 1.5:
-// using Soil   = chip::app::Clusters::SoilMeasurement;
-// using Limits = Soil::Structs::MeasurementAccuracyStruct::Type;
-// using Range  = Soil::Structs::MeasurementAccuracyRangeStruct::Type;
-
-// Soil::Instance * sInstance = nullptr;
-
-// // Limits: 0–100% with a single accuracy range covering the whole span.
-// // The MeasurementAccuracy* structs are shared across clusters;
-// // fields generally include Min/MaxMeasuredValue and an accuracy ranges list. 
-// // (In energy clusters the range has range_min/range_max & percent_* fields.)
-// Range   kRangeList[1];
-// DataModel::List<const Range> kRanges(kRangeList);
-// Limits  kLimits;
-
-// void BuildLimits()
-// {
-//     // 0 .. 100 percent range
-//     kLimits.minMeasuredValue = 0;
-//     kLimits.maxMeasuredValue = 100;
-//     // Provide one accuracy range; percent_* are typically in 100ths.
-//     kRangeList[0].rangeMin        = 0;
-//     kRangeList[0].rangeMax        = 100;
-//     kRangeList[0].percentTypical  = MakeOptional(static_cast<uint16_t>(200)); // 2.00%
-//     kRangeList[0].percentMax      = MakeOptional(static_cast<uint16_t>(500)); // 5.00%
-//     kLimits.accuracyRanges        = kRanges;
-//     kLimits.measured              = true;
-//     // If MeasurementType is exposed for this cluster, you can set it if needed.
-//     // kLimits.measurementType = Clusters::detail::MeasurementTypeEnum::kPercentage;
-// }
-
-// //void TimerHandler(System::Layer *, void *, System::Error)
-// void TimerHandler(chip::System::Layer *, void *)
-// {
-//     const uint8_t pct = gSensor.Sample(); // 0..100
-//     if (sInstance)
-//     {
-//         // Set attribute 0x0001 and trigger reporting if it changed:
-//         sInstance->SetSoilMeasuredValue(static_cast<Percent>(pct));
-//     }
-
-//     //SystemLayer().StartTimer(System::Clock::Milliseconds32(kUpdateMs), TimerHandler, nullptr);
-//     chip::System::SystemLayer().StartTimer(chip::System::Clock::Milliseconds32(kUpdateMs),
-//                                        TimerHandler, nullptr);
-// }
-// } // namespace
-
-// extern "C" void emberAfSoilMeasurementClusterInitCallback(EndpointId endpointId)
-// {
-//     static Soil::Instance instance(endpointId);
-//     sInstance = &instance;
-
-//     gSensor.Init(/* ADC ch */ 0);
-
-//     BuildLimits();
-//     VerifyOrDie(sInstance->Init(kLimits) == CHIP_NO_ERROR);
-
-//     // Prime 0x0001 to avoid “NullValue” in TC-SOIL-2.2
-//     const uint8_t first = gSensor.Sample();
-//     sInstance->SetSoilMeasuredValue(static_cast<Percent>(first));
-
-//     // Periodic updates
-//     SystemLayer().StartTimer(System::Clock::Milliseconds32(kUpdateMs), TimerHandler, nullptr);
-// }
-
-/*
- * Minimal soil measurement loop for nRF + Matter (no stub include).
- * - Reads SAADC channel 0 from DT node-label: zephyr_user
- * - Maps raw ADC to Percent100ths (0..10000)
- * - Updates SoilMeasurement cluster via generated attribute accessor
- */
-
-#include <zephyr/devicetree.h>
-#include <zephyr/device.h>
-#include <zephyr/kernel.h>
-#include <zephyr/drivers/adc.h>
-
-#include <app/server/Server.h>
+#include <app/AttributeAccessInterface.h>
+#include <app/ConcreteAttributePath.h>
+#include <app/reporting/reporting.h>              // MatterReportingAttributeChangeCallback
+#include <lib/core/DataModelTypes.h>
 #include <platform/CHIPDeviceLayer.h>
-#include <lib/support/logging/CHIPLogging.h>
+#include <system/SystemClock.h>
+#include <zephyr/logging/log.h>
 
-// Generated attribute accessors (path provided by zzz_generated/app-common in your compile flags)
-#include <app-common/zap-generated/attributes/Accessors.h>
+LOG_MODULE_REGISTER(soil_measurement_nrf, CONFIG_CHIP_APP_LOG_LEVEL);
 
 using namespace chip;
+using namespace chip::app;
 using namespace chip::DeviceLayer;
 
-// ========== App configuration ==========
-static constexpr EndpointId kSoilEndpoint = 1;     // adjust if your endpoint differs
-static constexpr uint32_t   kUpdateMs     = 1000;  // measurement interval
+// ---- Try to include ANY generated ids headers (paths vary by build) ----
+#if __has_include(<zap-generated/app-common/ids/Clusters.h>)
+  #include <zap-generated/app-common/ids/Clusters.h>
+#elif __has_include(<app-common/zap-generated/ids/Clusters.h>)
+  #include <app-common/zap-generated/ids/Clusters.h>
+#elif __has_include(<zap-generated/ids/Clusters.h>)
+  #include <zap-generated/ids/Clusters.h>
+#else
+  #error "Couldn't find generated Clusters.h (zap-generated*/ids/Clusters.h)."
+#endif
 
-// Expecting in your board overlay:
-//
-// / {
-//   zephyr_user: adc_channels {
-//     compatible = "zephyr,user";
-//     io-channels = <&adc 0>, <&adc 1>;
-//   };
-// };
-//
-static const struct adc_dt_spec kAdcCh[] = {
-    ADC_DT_SPEC_GET_BY_IDX(DT_NODELABEL(zephyr_user), 0),
-    ADC_DT_SPEC_GET_BY_IDX(DT_NODELABEL(zephyr_user), 1),
+#if __has_include(<zap-generated/app-common/ids/Attributes.h>)
+  #include <zap-generated/app-common/ids/Attributes.h>
+#elif __has_include(<app-common/zap-generated/ids/Attributes.h>)
+  #include <app-common/zap-generated/ids/Attributes.h>
+#elif __has_include(<zap-generated/ids/Attributes.h>)
+  #include <zap-generated/ids/Attributes.h>
+#else
+  #error "Couldn't find generated Attributes.h (zap-generated*/ids/Attributes.h)."
+#endif
+// -----------------------------------------------------------------------
+
+// ---- Detect whichever AttributeAccess registration API your CHIP provides
+#if __has_include(<app/util/attribute-storage.h>)
+  #include <app/util/attribute-storage.h>   // registerAttributeAccessOverride / RegisterAttributeAccessOverride
+  #define HAVE_ATTR_STORAGE 1
+#endif
+
+#if __has_include(<app/AttributeAccessInterfaceRegistry.h>)
+  #include <app/AttributeAccessInterfaceRegistry.h> // AttributeAccessInterfaceRegistry::Instance().Register(...)
+  #define HAVE_ATTR_IF_REGISTRY 1
+#endif
+
+#if __has_include(<app/EmberAfAttributeAccessRegistry.h>)
+  #include <app/EmberAfAttributeAccessRegistry.h>   // EmberAfAttributeAccessRegistry::Instance().Register(...)
+  #define HAVE_EMBER_AF_REGISTRY 1
+#endif
+// -----------------------------------------------------------------------
+
+namespace {
+
+constexpr EndpointId kSoilEndpoint = 1;      // endpoint that hosts your SoilMeasurement cluster
+constexpr uint32_t   kUpdateMs     = 5000;   // periodic "new reading" cadence
+
+static uint16_t gSoilPctX100 = 3000;         // 0..10000 -> 0.00..100.00%
+
+static uint16_t ReadSoilMoisturePercentX100()
+{
+    // TODO: replace with real sensor read
+    gSoilPctX100 = static_cast<uint16_t>((gSoilPctX100 + 123) % 10001);
+    return gSoilPctX100;
+}
+
+// Provide read access for SoilMoistureMeasuredValue
+class SoilAttrAccess : public AttributeAccessInterface
+{
+public:
+    SoilAttrAccess()
+        : AttributeAccessInterface(Optional<EndpointId>::Missing(), Clusters::SoilMeasurement::Id) {}
+
+    CHIP_ERROR Read(const ConcreteReadAttributePath & path, AttributeValueEncoder & encoder) override
+    {
+        if (path.mAttributeId == Clusters::SoilMeasurement::Attributes::SoilMoistureMeasuredValue::Id)
+        {
+            // Encode current value as uint16 (Percent100ths)
+            return encoder.Encode(static_cast<uint16_t>(gSoilPctX100));
+        }
+        return CHIP_IM_GLOBAL_STATUS(UnsupportedAttribute);
+    }
 };
 
-static int16_t sSampleBuf; // buffer for one sample
+SoilAttrAccess gSoilAttrAccess;
 
-// Forward decls exported to main.cpp
-extern "C" CHIP_ERROR InitSoilSensor();
-extern "C" void       StartMeasurementLoop();
-
-// Local fwd decls
-static void        TimerHandler(System::Layer * aLayer, void * aAppState);
-static CHIP_ERROR  ReadChannelPercent100ths(const adc_dt_spec & ch, uint16_t & outPercent100ths);
-
-// ---------- Public (called from main.cpp) ----------
-extern "C" CHIP_ERROR InitSoilSensor()
+inline void NotifyReport(EndpointId ep)
 {
-    // Configure each ADC channel declared in DT
-    for (const auto & ch : kAdcCh)
-    {
-        if (!device_is_ready(ch.dev)) {
-            ChipLogError(AppServer, "ADC device not ready");
-            return CHIP_ERROR_INCORRECT_STATE;
-        }
-        const int rc = adc_channel_setup_dt(&ch);
-        if (rc) {
-            ChipLogError(AppServer, "adc_channel_setup_dt() failed: %d", rc);
-            return CHIP_ERROR_INTERNAL;
-        }
-    }
-
-    ChipLogProgress(AppServer, "Soil sensor ADC initialized (%zu channels)", sizeof(kAdcCh) / sizeof(kAdcCh[0]));
-
-    // Optionally set sane initial attribute value (e.g., null or 0%)
-    // Here we set 0%:
-    (void) chip::app::Clusters::SoilMeasurement::Attributes::SoilMoistureMeasuredValue::Set(
-        kSoilEndpoint, static_cast<uint16_t>(0));
-
-    return CHIP_NO_ERROR;
+    MatterReportingAttributeChangeCallback(
+        ep,
+        Clusters::SoilMeasurement::Id,
+        Clusters::SoilMeasurement::Attributes::SoilMoistureMeasuredValue::Id);
 }
 
-extern "C" void StartMeasurementLoop()
+static void TimerHandler(System::Layer * layer, void *)
 {
-    // Start periodic timer
-    SystemLayer().StartTimer(System::Clock::Milliseconds32(kUpdateMs), TimerHandler, nullptr);
-    ChipLogProgress(AppServer, "Soil measurement loop started (%u ms)", (unsigned) kUpdateMs);
+    (void) layer->StartTimer(System::Clock::Milliseconds32(kUpdateMs), TimerHandler, nullptr);
+    const uint16_t v = ReadSoilMoisturePercentX100();
+    NotifyReport(kSoilEndpoint);
+    LOG_INF("Soil moisture updated: %u.%02u%%", v / 100, v % 100);
 }
 
-// ---------- Periodic task ----------
-static void TimerHandler(System::Layer * /*aLayer*/, void * /*aAppState*/)
+} // namespace
+
+extern "C" {
+
+void emberAfSoilMeasurementClusterInitCallback(EndpointId endpoint)
 {
-    // Read channel 0 (change to kAdcCh[1] if you want the second probe)
-    uint16_t percent100ths = 0;
+    if (endpoint != kSoilEndpoint)
+        return;
 
-    if (ReadChannelPercent100ths(kAdcCh[0], percent100ths) == CHIP_NO_ERROR)
-    {
-        // Write to SoilMeasurement.MeasuredValue
-        // const CHIP_ERROR err =
-        //     chip::app::Clusters::SoilMeasurement::Attributes::SoilMoistureMeasuredValue::Set(kSoilEndpoint, percent100ths);
-        const CHIP_ERROR err = 
-            chip::app::Clusters::SoilMeasurement::Attributes::SoilMoistureMeasuredValue::Set(kSoilEndpoint, percent100ths, chip::app::Clusters::Attributes::Accessors::MarkAttributeDirty::kYes);
+// --- Robust registration across CHIP forks/versions ---
+#if defined(HAVE_ATTR_IF_REGISTRY)
+    AttributeAccessInterfaceRegistry::Instance().Register(&gSoilAttrAccess);
+#elif defined(HAVE_EMBER_AF_REGISTRY)
+    EmberAfAttributeAccessRegistry::Instance().Register(&gSoilAttrAccess);
+#elif defined(HAVE_ATTR_STORAGE)
+    // Legacy/CHIP trees usually expose this in the global namespace.
+    registerAttributeAccessOverride(&gSoilAttrAccess);
+#else
+    #error "No attribute access registration API found. Ensure one of: \
+    app/util/attribute-storage.h, app/AttributeAccessInterfaceRegistry.h, \
+    or app/EmberAfAttributeAccessRegistry.h is available."
+#endif
 
-        if (err != CHIP_NO_ERROR) {
-            ChipLogError(AppServer, "Set SoilMoistureMeasuredValue failed: %s", ErrorStr(err));
-        } else {
-            ChipLogProgress(AppServer, "Soil moisture = %u.%02u%%",
-                            (unsigned)(percent100ths / 100),
-                            (unsigned)(percent100ths % 100));
-        }
-    }
 
-    // Re-arm timer
-    SystemLayer().StartTimer(System::Clock::Milliseconds32(kUpdateMs), TimerHandler, nullptr);
+#if defined(HAVE_ATTR_IF_REGISTRY)
+    AttributeAccessInterfaceRegistry::Instance().Register(&gSoilAttrAccess);
+#elif defined(HAVE_EMBER_AF_REGISTRY)
+    EmberAfAttributeAccessRegistry::Instance().Register(&gSoilAttrAccess);
+#elif !defined(HAVE_ATTR_STORAGE)
+    #error "No attribute access registration API found. Please ensure one of: app/util/attribute-storage.h, app/AttributeAccessInterfaceRegistry.h, or app/EmberAfAttributeAccessRegistry.h is available."
+#endif
+
+    (void) SystemLayer().StartTimer(System::Clock::Milliseconds32(kUpdateMs), TimerHandler, nullptr);
 }
 
-// ---------- ADC helper ----------
-static CHIP_ERROR ReadChannelPercent100ths(const adc_dt_spec & ch, uint16_t & outPercent100ths)
+void emberAfSoilMeasurementClusterShutdownCallback(EndpointId endpoint)
 {
-    adc_sequence sequence = {
-        .buffer      = &sSampleBuf,
-        .buffer_size = sizeof(sSampleBuf),
-    };
-
-    int rc = adc_sequence_init_dt(&ch, &sequence);
-    if (rc) {
-        ChipLogError(AppServer, "adc_sequence_init_dt() failed: %d", rc);
-        return CHIP_ERROR_INTERNAL;
-    }
-
-    rc = adc_read(ch.dev, &sequence);
-    if (rc) {
-        ChipLogError(AppServer, "adc_read() failed: %d", rc);
-        return CHIP_ERROR_INTERNAL;
-    }
-
-    int32_t raw = sSampleBuf;
-    if (raw < 0) raw = 0;
-
-    // Simple linear mapping (12-bit SAADC assumed). Calibrate/replace as needed.
-    constexpr int32_t kMaxCounts = 4095;
-    int32_t pct100ths = (raw * 10000) / kMaxCounts;
-
-    if (pct100ths < 0) pct100ths = 0;
-    if (pct100ths > 10000) pct100ths = 10000;
-
-    outPercent100ths = static_cast<uint16_t>(pct100ths);
-    return CHIP_NO_ERROR;
+    if (endpoint != kSoilEndpoint)
+        return;
+    (void) SystemLayer().CancelTimer(TimerHandler, nullptr);
 }
+
+} // extern "C"

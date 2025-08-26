@@ -1,6 +1,13 @@
 
 cmake_minimum_required(VERSION 3.20.0)
 
+# Bridge older/newer mask macro names expected by endpoint-config-defines.h
+add_definitions(
+  -DMATTER_ATTRIBUTE_FLAG_SINGLETON=0
+  -DMATTER_ATTRIBUTE_FLAG_READABLE=0
+  -DMATTER_ATTRIBUTE_FLAG_EXTERNAL_STORAGE=0
+)
+
 get_filename_component(CHIP_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../connectedhomeip REALPATH)
 get_filename_component(NRFCONNECT_COMMON ${CHIP_ROOT}/examples/platform/nrfconnect REALPATH)
 get_filename_component(SOILSENSOR_COMMON ${CMAKE_CURRENT_SOURCE_DIR}/../soil-sensor-common REALPATH)
@@ -8,6 +15,9 @@ get_filename_component(SOILSENSOR_COMMON ${CMAKE_CURRENT_SOURCE_DIR}/../soil-sen
 set(GEN_DIR ${CMAKE_BINARY_DIR}/gen/app-zapgen/zapgen/app-templates/zap-generated)
 
 set(CHIP_ROOT ${CHIP_ROOT} CACHE STRING "Path to CHIP root directory")
+
+# Where ZAP puts generated headers for THIS build
+set(ZAP_GEN_DIR ${CMAKE_BINARY_DIR}/gen/app-zapgen/zapgen/app-templates)
 
 # --- ZAP generator paths -----------------------------------------------
 #set(ENV{ZCL_PROPERTIES}    "${CHIP_ROOT}/src/app/zap-templates/zcl/zcl.json")
@@ -32,20 +42,32 @@ include(${CHIP_ROOT}/src/app/chip_data_model.cmake)
 
 
 target_sources(app PRIVATE
-    main/main.cpp
-    main/SoilSensormanager.cpp
-    main/soil_measurement_nrf.cpp
+  main/main.cpp
+  main/SoilSensormanager.cpp
+  main/soil_measurement_nrf.cpp  
 )
 
 
 target_include_directories(app PRIVATE
   main/include
-  ${GEN_DIR}
-  ${GEN_DIR}/app-common
+  # Our ZAP outputs (put these FIRST and use BEFORE)
+  ${ZAP_GEN_DIR}
+  ${ZAP_GEN_DIR}/zap-generated
+  ${ZAP_GEN_DIR}/zap-generated/app-common
+
+  # Common headers you already had
   ${SOILSENSOR_COMMON}
-#  ${CMAKE_BINARY_DIR}/nrfconnect/gen/app-zapgen/zapgen/app-templates/zap-generated
-  ${CMAKE_BINARY_DIR}/nrfconnect/gen/app-zapgen/zapgen/app-templates/zap-generated/app-common
+
+  # Avoid pulling in headers too broadly from CHIP unless necessary.
+  # If you really need something from CHIP, keep it AFTER our generated dirs.
   ${CHIP_ROOT}/src
+  
+#   ${GEN_DIR}
+#   ${GEN_DIR}/app-common
+#   ${SOILSENSOR_COMMON}
+# #  ${CMAKE_BINARY_DIR}/nrfconnect/gen/app-zapgen/zapgen/app-templates/zap-generated
+#   ${CMAKE_BINARY_DIR}/nrfconnect/gen/app-zapgen/zapgen/app-templates/zap-generated/app-common
+#   ${CHIP_ROOT}/src
 )
 
 #set(PM_STATIC_YML ${CMAKE_CURRENT_SOURCE_DIR}/pm_static_nrf7002dk_nrf5340_cpuapp_dfu.yml)
@@ -69,3 +91,5 @@ chip_configure_data_model(app
     --gen-only
 )
 
+# (optional) Show where we think the generated headers are
+message(STATUS "ZAP_GEN_DIR = ${ZAP_GEN_DIR}")

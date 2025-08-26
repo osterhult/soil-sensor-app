@@ -1,39 +1,107 @@
-#include "include/SoilSensorManager.h"
-#include <zephyr/logging/log.h>
-#include <zephyr/sys/util.h>
-#include <zephyr/devicetree.h> 
-#include <zephyr/drivers/adc.h> 
+// // nrfconnect/main/SoilSensormanager.cpp
 
-LOG_MODULE_REGISTER(soil_sensor, CONFIG_LOG_DEFAULT_LEVEL);
+// #include <zephyr/kernel.h>
+// #include <zephyr/logging/log.h>
+// LOG_MODULE_REGISTER(soil_mgr, LOG_LEVEL_INF);
 
-/* One-time ADC channel descriptions pulled from your overlay */
-static const struct adc_dt_spec kAdcChannels[] = {
+// #include <zephyr/drivers/adc.h>
+
+// static const struct adc_dt_spec soil_adc_channels[] = {
+//     ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr, user), 0),
+//     ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr, user), 1),
+// };
+
+// static int adc_init_all(void)
+// {
+//     for (size_t i = 0; i < ARRAY_SIZE(adc_channels); ++i) {
+//         if (!device_is_ready(adc_channels[i].dev)) {
+//             LOG_ERR("ADC dev not ready (ch%u)", (unsigned)i);
+//             return -ENODEV;
+//         }
+//         int err = adc_channel_setup_dt(&adc_channels[i]);
+//         if (err) {
+//             LOG_ERR("adc_channel_setup_dt(%u) failed: %d", (unsigned)i, err);
+//             return err;
+//         }
+//     }
+//     return 0;
+// }
+
+// int SoilSensorManager_Init()
+// {
+//     return adc_init_all();
+// }
+
+// /* Example read helper: returns raw sample (you can convert to percent later) */
+// int SoilSensorManager_ReadRaw(uint16_t * out0, uint16_t * out1)
+// {
+//     if (!out0 || !out1) return -EINVAL;
+
+//     int16_t buf0;
+//     struct adc_sequence seq0 = { 0 };
+//     adc_sequence_init_dt(&adc_channels[0], &seq0);
+//     seq0.buffer = &buf0;
+//     seq0.buffer_size = sizeof(buf0);
+//     int err = adc_read(adc_channels[0].dev, &seq0);
+//     if (err) return err;
+
+//     int16_t buf1;
+//     struct adc_sequence seq1 = { 0 };
+//     adc_sequence_init_dt(&adc_channels[1], &seq1);
+//     seq1.buffer = &buf1;
+//     seq1.buffer_size = sizeof(buf1);
+//     err = adc_read(adc_channels[1].dev, &seq1);
+//     if (err) return err;
+
+//     *out0 = (buf0 < 0) ? 0 : static_cast<uint16_t>(buf0);
+//     *out1 = (buf1 < 0) ? 0 : static_cast<uint16_t>(buf1);
+//     return 0;
+// }
+
+#include <zephyr/drivers/adc.h>
+#include <zephyr/device.h>
+#include <zephyr/devicetree.h>
+
+static const struct adc_dt_spec adc_channels[] = {
     ADC_DT_SPEC_GET_BY_IDX(DT_NODELABEL(zephyr_user), 0),
     ADC_DT_SPEC_GET_BY_IDX(DT_NODELABEL(zephyr_user), 1),
 };
 
-void SoilSensorManager::Init(uint8_t ch)
+int adc_init_all(void)
 {
-    const struct adc_dt_spec * chan = &kAdcChannels[ch];
-    adc_is_ready_dt(chan);
-    adc_channel_setup_dt(chan);
-    mSeq = {};
-    mSeq.buffer      = &mBuf;
-    mSeq.buffer_size = sizeof(mBuf);
-    adc_sequence_init_dt(chan, &mSeq);
+    for (size_t i = 0; i < ARRAY_SIZE(adc_channels); ++i) {
+        if (!device_is_ready(adc_channels[i].dev)) {
+            return -ENODEV;
+        }
+        int err = adc_channel_setup_dt(&adc_channels[i]);
+        if (err) {
+            return err;
+        }
+    }
+    return 0;
 }
 
-uint8_t SoilSensorManager::Sample(uint8_t ch)
+int SoilSensorManager_ReadRaw(uint16_t *raw0, uint16_t *raw1)
 {
-    const struct adc_dt_spec * chan = &kAdcChannels[ch];
-    if (adc_read(chan->dev, &mSeq) != 0) {
-        return 0;
-    }
-    int32_t mv = mBuf;
-    adc_raw_to_millivolts_dt(chan, &mv);
+    int16_t sample0, sample1;
 
-    // Calibrate these two bounds for your probe:
-    // e.g., 3000 mV ≈ dry → 0%, 1800 mV ≈ wet → 100%
-    mv = CLAMP(mv, 1800, 3000);
-    return static_cast<uint8_t>(((3000 - mv) * 100) / 1200);
+    struct adc_sequence seq0;
+    adc_sequence_init_dt(&adc_channels[0], &seq0);
+    seq0.buffer = &sample0;
+    seq0.buffer_size = sizeof(sample0);
+
+    struct adc_sequence seq1;
+    adc_sequence_init_dt(&adc_channels[1], &seq1);
+    seq1.buffer = &sample1;
+    seq1.buffer_size = sizeof(sample1);
+
+    int err = adc_read_dt(&adc_channels[0], &seq0);
+    if (err) return err;
+
+    err = adc_read_dt(&adc_channels[1], &seq1);
+    if (err) return err;
+
+    *raw0 = (uint16_t)sample0;
+    *raw1 = (uint16_t)sample1;
+    return 0;
 }

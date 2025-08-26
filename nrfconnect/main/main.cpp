@@ -1,38 +1,34 @@
-/*
- * Minimal Matter server bootstrap + soil sensor start-up (no stub dependencies)
- */
+#include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
+LOG_MODULE_REGISTER(soil_app, LOG_LEVEL_INF);
 
-#include <app/server/Server.h>            // init params are available from this header in your tree
 #include <platform/CHIPDeviceLayer.h>
-#include <lib/support/logging/CHIPLogging.h>
+#include <app/server/Server.h>  // keep this one
+#include <lib/core/CHIPError.h>
+
+#include "soil_measurement_nrf.h"
 
 using namespace chip;
-using namespace chip::DeviceLayer;
 
-// Provided by soil_measurement_nrf.cpp
-extern "C" CHIP_ERROR InitSoilSensor();
-extern "C" void       StartMeasurementLoop();
 
-int main()
+extern "C" int main(void)
 {
-    // Initialize CHIP stack
-    VerifyOrDie(PlatformMgr().InitChipStack() == CHIP_NO_ERROR);
+    LOG_INF("Soil Sensor starting");
 
-    // Prefer CommonCaseDeviceServerInitParams if available, else fall back to ServerInitParams
-    #if defined(CHIP_DEVICE_LAYER_TARGET_NRFCONNECT) && defined(CHIP_CONFIG_KVS_PATH) \
-        && !defined(CHIP_SERVER_NO_COMMON_CASE) /* heuristic: common in newer trees */
-        // Newer trees keep CommonCaseDeviceServerInitParams inside Server.h
-        chip::CommonCaseDeviceServerInitParams initParams;
-        (void) initParams.InitializeStaticResourcesBeforeServerInit();
-    #else
-        chip::ServerInitParams initParams;
-    #endif
+    chip::CommonCaseDeviceServerInitParams initParams;
+    CHIP_ERROR err = initParams.InitializeStaticResourcesBeforeServerInit();
+    if (err != CHIP_NO_ERROR) {
+        LOG_ERR("InitParams failed: %" PRId32, static_cast<int32_t>(err.AsInteger()));
+        return -1;
+    }
 
-    VerifyOrDie(Server::GetInstance().Init(initParams) == CHIP_NO_ERROR);
+    err = chip::Server::GetInstance().Init(initParams);
+    if (err != CHIP_NO_ERROR) {
+        LOG_ERR("Server init failed: %" PRId32, static_cast<int32_t>(err.AsInteger()));
+        return -2;
+    }
 
-    VerifyOrDie(InitSoilSensor() == CHIP_NO_ERROR);
-    StartMeasurementLoop();
-
-    PlatformMgr().RunEventLoop();
+    LOG_INF("Matter server is up");
+    /* If you need a run loop, add it here, or just return. */
     return 0;
 }
