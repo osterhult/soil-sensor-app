@@ -20,7 +20,7 @@ config NRF_DEFAULT_IPC_RADIO
 
 # Enable IEEE802.15.4 serialization to network core
 config NETCORE_IPC_RADIO_IEEE802154
-	default y if (SOC_SERIES_NRF53X) && !WIFI_NRF700X
+	default y if SOC_SERIES_NRF53X && !WIFI_NRF70
 
 # Enable Bluetooth serialization to network core
 config NETCORE_IPC_RADIO_BT_HCI_IPC

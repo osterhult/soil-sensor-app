@@ -1,116 +1,62 @@
-/* boards/nrf7002dk_nrf5340_cpuapp.overlay */
+/* boards/nrf7002dk_nrf5340_cpuapp.overlay
+ *
+ * Soil Sensor app overlay
+ * - Keep ADC channels for “fake/real” soil reads
+ * - Use UART console
+ * - Match sample’s IPC thread priority (important for nRF5340+Wi-Fi)
+ * - (Optional) ext flash chosen left commented; enable only if you switch to Factory Data
+ */
 
-/* Enable SAADC */
+#include <zephyr/dt-bindings/ipc_service/static_vrings.h>
+
+/* ---------- App-specific nodes ---------- */
 &adc {
-	status = "okay";
-	#address-cells = <1>;
-	#size-cells = <0>;
+    status = "okay";
+    #address-cells = <1>;
+    #size-cells = <0>;
 
-	channel@0 {
-		reg = <0>;
-		/* Use full enum names */
-		zephyr,gain = "ADC_GAIN_1_6";
-		zephyr,reference = "ADC_REF_INTERNAL";
-		/* Typical 40 us acquisition time */
-		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 40)>;
-		zephyr,input-positive = <NRF_SAADC_AIN0>;
-		zephyr,resolution = <12>;
-	};
+    /* SAADC channel 0 on AIN0 (P0.02) */
+    channel@0 {
+        reg = <0>;
+        zephyr,gain = "ADC_GAIN_1_6";
+        zephyr,reference = "ADC_REF_INTERNAL";
+        zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 40)>;
+        zephyr,input-positive = <NRF_SAADC_AIN0>;
+        zephyr,resolution = <12>;
+    };
 
-	channel@1 {
-		reg = <1>;
-		zephyr,gain = "ADC_GAIN_1_6";
-		zephyr,reference = "ADC_REF_INTERNAL";
-		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 40)>;
-		zephyr,input-positive = <NRF_SAADC_AIN1>;
-		zephyr,resolution = <12>;
-	};
-};
+    /* SAADC channel 1 on AIN1 (P0.03) */
+    channel@1 {
+        reg = <1>;
+        zephyr,gain = "ADC_GAIN_1_6";
+        zephyr,reference = "ADC_REF_INTERNAL";
+        zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 40)>;
+        zephyr,input-positive = <NRF_SAADC_AIN1>;
+        zephyr,resolution = <12>;
+    };
+}; 
 
-/* App-specific node with a label for C code to reference */
+/* A simple handle to reference from C/C++ */
  / {
-	zephyr_user: zephyr,user {
-		/* Two io-channels: channel 0 and 1 from &adc */
-		io-channels = <&adc 0>, <&adc 1>;
-	};
+    zephyr_user: zephyr,user {
+        /* io-channels: <&adc ch0>, <&adc ch1> */
+        io-channels = <&adc 0>, <&adc 1>;
+    };
+
+    /* Console on UART0 */
+    chosen {
+        zephyr,console = &uart0;
+        zephyr,uart-mcumgr = &uart0;
+
+        /* For Factory Data later, uncomment the next line: */
+        nordic,pm-ext-flash = &mx25r64;
+    };
 };
 
-// 
+&ipc0 {
+    zephyr,priority = <0 PRIO_COOP>;
+};  
 
-
-// &{/} {                       /* root node – just opens a scope */
-//     zephyr_user: adc_channels {
-//         compatible = "zephyr,user";
-//         io-channels = <&adc 0>, <&adc 1>;
-//     };
-// };
-
-// /* SAADC on nRF5340 (application core) */
-// &adc {
-//     status = "okay";
-
-//     /* Channels are children of the ADC; set cells so ‘reg = <N>;’ is valid. */
-//     #address-cells = <1>;
-//     #size-cells    = <0>;
-
-//     /* ── Channel 0  (AIN0 – P0.02) ─────────────────────────── */
-//     ch0: channel@0 {
-//         reg = <0>;
-//         zephyr,input-positive   = <NRF_SAADC_AIN0>;
-
-//         zephyr,gain             = "ADC_GAIN_1_6";
-//         zephyr,reference        = "ADC_REF_VDD_1_4";
-//         zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
-//         zephyr,resolution       = <12>;
-//     };
-
-//     /* ── Channel 1  (AIN1 – P0.03) ─────────────────────────── */
-//     ch1: channel@1 {
-//         reg = <1>;
-//         zephyr,input-positive   = <NRF_SAADC_AIN1>;
-
-//         zephyr,gain             = "ADC_GAIN_1_6";
-//         zephyr,reference        = "ADC_REF_VDD_1_4";
-//         zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
-//         zephyr,resolution       = <12>;
-//     };
-// };
-
-
-///////////////////////
-
-// / {
-
-//     chosen {
-// 		nordic,pm-ext-flash = &mx25r64;
-// 	};
-
-//     zephyr,user {
-// 		io-channels = <&adc NRF_SAADC_AIN0>, <&adc NRF_SAADC_AIN1>;
-//     };
-// };
-
-
-
-
-// &adc {
-//     status = "okay";
-//     #address-cells = <1>;
-//     #size-cells = <0>;
-
-//     channel@0 {
-//         reg = <0>;
-//         zephyr,gain = "ADC_GAIN_1_5";
-//         zephyr,reference = "ADC_REF_INTERNAL";
-//         zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 40)>;
-//         zephyr,input-positive = <NRF_SAADC_AIN1>;
-//     };
-
-//     channel@1 {
-//         reg = <1>;
-//         zephyr,gain = "ADC_GAIN_1_5";
-//         zephyr,reference = "ADC_REF_INTERNAL";
-//         zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 40)>;
-//         zephyr,input-positive = <NRF_SAADC_AIN2>;
-//     };
-// };
+&uart0 {
+    status = "okay";
+}; 

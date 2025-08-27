@@ -1,13 +1,6 @@
 
 cmake_minimum_required(VERSION 3.20.0)
 
-# Bridge older/newer mask macro names expected by endpoint-config-defines.h
-add_definitions(
-  -DMATTER_ATTRIBUTE_FLAG_SINGLETON=0
-  -DMATTER_ATTRIBUTE_FLAG_READABLE=0
-  -DMATTER_ATTRIBUTE_FLAG_EXTERNAL_STORAGE=0
-)
-
 get_filename_component(CHIP_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../connectedhomeip REALPATH)
 get_filename_component(NRFCONNECT_COMMON ${CHIP_ROOT}/examples/platform/nrfconnect REALPATH)
 get_filename_component(SOILSENSOR_COMMON ${CMAKE_CURRENT_SOURCE_DIR}/../soil-sensor-common REALPATH)
@@ -40,11 +33,34 @@ include(${CHIP_ROOT}/config/nrfconnect/app/enable-gnu-std.cmake)
 include(${CHIP_ROOT}/config/nrfconnect/app/flashing.cmake)
 include(${CHIP_ROOT}/src/app/chip_data_model.cmake)
 
+target_compile_definitions(app PRIVATE MATTER_ATTRIBUTE_FLAG_SINGLETON=0x20)
+
+
+
+# NCS exposes this variable; fall back to your absolute path if not set
+
+if (NOT CHIP_ROOT)
+  set(CHIP_ROOT "/Users/osterhult/Kod/Matter/connectedhomeip")
+endif()
+
+# CMakeLists.txt – keep this AFTER project()/find_package(Zephyr)
+message(STATUS "CHIP_ROOT=${CHIP_ROOT}")
+
+# Sanity-check: ensure ExampleDACs.cpp exists where we think it does
+if (NOT EXISTS "${CHIP_ROOT}/src/credentials/examples/ExampleDACs.cpp")
+  message(FATAL_ERROR "ExampleDACs.cpp not found at: ${CHIP_ROOT}/src/credentials/examples/ExampleDACs.cpp")
+endif()
+
+# Provide the expected DevelopmentCerts::* symbols and pull in ExampleDACs constants
+target_sources(app PRIVATE
+  ${CHIP_ROOT}/src/credentials/examples/ExampleDACs.cpp
+  # main/DevCertsShim.cpp
+)
 
 target_sources(app PRIVATE
   main/main.cpp
   main/SoilSensormanager.cpp
-  main/soil_measurement_nrf.cpp  
+  main/soil_measurement_nrf.cpp 
 )
 
 
