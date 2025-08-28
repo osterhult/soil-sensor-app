@@ -1,21 +1,13 @@
-/* boards/nrf7002dk_nrf5340_cpuapp.overlay
- *
- * Soil Sensor app overlay
- * - Keep ADC channels for “fake/real” soil reads
- * - Use UART console
- * - Match sample’s IPC thread priority (important for nRF5340+Wi-Fi)
- * - (Optional) ext flash chosen left commented; enable only if you switch to Factory Data
- */
+/* boards/nrf7002dk_nrf5340_cpuapp.overlay */
 
 #include <zephyr/dt-bindings/ipc_service/static_vrings.h>
 
-/* ---------- App-specific nodes ---------- */
+/* ---------- App-specific nodes (ADC etc.) ---------- */
 &adc {
     status = "okay";
     #address-cells = <1>;
     #size-cells = <0>;
 
-    /* SAADC channel 0 on AIN0 (P0.02) */
     channel@0 {
         reg = <0>;
         zephyr,gain = "ADC_GAIN_1_6";
@@ -25,7 +17,6 @@
         zephyr,resolution = <12>;
     };
 
-    /* SAADC channel 1 on AIN1 (P0.03) */
     channel@1 {
         reg = <1>;
         zephyr,gain = "ADC_GAIN_1_6";
@@ -34,29 +25,34 @@
         zephyr,input-positive = <NRF_SAADC_AIN1>;
         zephyr,resolution = <12>;
     };
-}; 
+};
 
-/* A simple handle to reference from C/C++ */
  / {
     zephyr_user: zephyr,user {
-        /* io-channels: <&adc ch0>, <&adc ch1> */
         io-channels = <&adc 0>, <&adc 1>;
     };
 
-    /* Console on UART0 */
+    /* Console on UART1 */
     chosen {
         zephyr,console = &uart0;
-        zephyr,uart-mcumgr = &uart0;
-
-        /* For Factory Data later, uncomment the next line: */
-        nordic,pm-ext-flash = &mx25r64;
+        zephyr,log-console = &uart0;
+        /* Leave external flash line commented unless you use Factory Data later */
+        // nordic,pm-ext-flash = &mx25r64;
     };
 };
 
+/* Match Wi-Fi IPC priority you already had */
 &ipc0 {
     zephyr,priority = <0 PRIO_COOP>;
-};  
+};
 
+/* Make uart1 explicit */
 &uart0 {
+    current-speed = <115200>;
     status = "okay";
-}; 
+};
+
+/* Optional but helpful: make sure nothing tries to use uart0 */
+&uart1 {
+    status = "disabled";
+};

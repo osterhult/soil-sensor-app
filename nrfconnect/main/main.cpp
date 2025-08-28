@@ -1,11 +1,13 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/printk.h>
 
 #include <platform/CHIPDeviceLayer.h>
 #include <app/server/Server.h>
 
 #include <credentials/DeviceAttestationCredsProvider.h>
 #include <credentials/examples/DeviceAttestationCredsExample.h>
+
 
 LOG_MODULE_REGISTER(soil_app, LOG_LEVEL_INF);
 
@@ -16,7 +18,14 @@ static uint16_t ReadSoilMoistureFake() { return 512; }
 
 extern "C" int main(void)
 {
-    LOG_INF("Soil Sensor: booting…");
+    k_msleep(500); // give console time to come up
+
+    for (int i = 0; i < 10; ++i) {
+        printk("UART printk #%d: hello from main()\n", i);
+        LOG_INF("UART LOG_INF #%d: hello from main()", i);
+        k_msleep(300);
+    }
+
 
     CHIP_ERROR err = PlatformMgr().InitChipStack();
     if (err != CHIP_NO_ERROR) {
