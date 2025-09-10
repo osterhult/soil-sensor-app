@@ -13,9 +13,40 @@ endchoice
 
 endif # NET_L2_OPENTHREAD
 
-# Include CHIP (Matter) feature and default definitions
-rsource "../connectedhomeip/config/nrfconnect/chip-module/Kconfig.features"
-rsource "../connectedhomeip/config/nrfconnect/chip-module/Kconfig.defaults"
+# # Include CHIP (Matter) feature and default definitions
+# rsource "../connectedhomeip/config/nrfconnect/chip-module/Kconfig.features"
+# rsource "../connectedhomeip/config/nrfconnect/chip-module/Kconfig.defaults"
 
 # Include Zephyr symbols
 source "Kconfig.zephyr"
+
+# --- shim to satisfy CHIP defaults on NCS v2.8 (symbol not present upstream) ---
+config BT_BUF_ACL_RX_COUNT_EXTRA
+    int
+    default 0
+    help
+      Compatibility shim for NCS v2.8. CHIP defaults may reference this
+      symbol; defining it here prevents “defined without a type” warnings.
+# -------------------------------------------------------------------------------
+
+
+# ---- CHIP Wi-Fi reconnection knobs (app-local definitions) ----
+config CHIP_WIFI_CONNECTION_RECOVERY_MINIMUM_INTERVAL
+    int "CHIP Wi-Fi reconnection min interval (ms)"
+    default 1000
+
+config CHIP_WIFI_CONNECTION_RECOVERY_MAXIMUM_INTERVAL
+    int "CHIP Wi-Fi reconnection max interval (ms)"
+    default 60000
+
+config CHIP_WIFI_CONNECTION_RECOVERY_JITTER
+    int "CHIP Wi-Fi reconnection jitter (ms)"
+    default 500
+
+config CHIP_WIFI_CONNECTION_RECOVERY_MAX_RETRIES_NUMBER
+    int "CHIP Wi-Fi reconnection max retries"
+    default 20
+
+config CHIP_WIFI
+    bool "Enable CHIP Wi-Fi path"
+    default y

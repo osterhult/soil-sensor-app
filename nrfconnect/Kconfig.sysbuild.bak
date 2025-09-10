@@ -2,15 +2,15 @@
 # Soil Sensor sysbuild Kconfig (clean, non-conflicting)
 #
 
-# Keep default IPC radio selections
+#### Radio core selection
 config NRF_DEFAULT_IPC_RADIO
     default y
 
-# 802.15.4 only if not using Wi-Fi
+# Enable IEEE802.15.4 serialization to network core
 config NETCORE_IPC_RADIO_IEEE802154
     default y if SOC_SERIES_NRF53X && !WIFI_NRF70
 
-# BLE HCI to net core
+# Enable Bluetooth serialization to network core
 config NETCORE_IPC_RADIO_BT_HCI_IPC
     default y if SOC_SERIES_NRF53X
 
@@ -27,13 +27,13 @@ config MATTER_OTA
 config WIFI_NRF70
     bool "Use nRF70 Wi-Fi"
     default y
-
-# NOTE: Do NOT define NETCORE_HCI_IPC here; it's a choice owned by NCS.
+# NOTE: Do NOT define NETCORE_HCI_IPC here. It is a choice defined by NCS.
 
 endmenu
 
 if BOOTLOADER_MCUBOOT
 
+#### DFU multi-image support
 config DFU_MULTI_IMAGE_PACKAGE_BUILD
     default y
 
@@ -41,11 +41,11 @@ config DFU_MULTI_IMAGE_PACKAGE_APP
     default y
 
 config PM_EXTERNAL_FLASH_MCUBOOT_SECONDARY
-    bool
     default y
 
-
+#### DFU network core configuration
 if SOC_SERIES_NRF53X
+
 config MCUBOOT_UPDATEABLE_IMAGES
     default 2
 
@@ -65,8 +65,9 @@ config NETCORE_APP_UPDATE
 
 config DFU_MULTI_IMAGE_PACKAGE_NET
     default y
+
 endif # SOC_SERIES_NRF53X
 endif # BOOTLOADER_MCUBOOT
 
-# Pull in upstream Zephyr/NCS sysbuild last
-source "$ZEPHYR_BASE/share/sysbuild/Kconfig"
+# Pull in Zephyr/NCS sysbuild Kconfig last
+source "${ZEPHYR_BASE}/share/sysbuild/Kconfig"

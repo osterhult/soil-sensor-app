@@ -32,12 +32,11 @@
         io-channels = <&adc 0>, <&adc 1>;
     };
 
-    /* Console on UART1 */
+    /* Console on UART1; enable external flash region for Partition Manager */
     chosen {
         zephyr,console = &uart0;
         zephyr,log-console = &uart0;
-        /* Leave external flash line commented unless you use Factory Data later */
-        // nordic,pm-ext-flash = &mx25r64;
+        nordic,pm-ext-flash = &mx25r64;
     };
 };
 

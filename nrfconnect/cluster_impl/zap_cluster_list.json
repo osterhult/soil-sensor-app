@@ -1,0 +1,8 @@
+{
+  "server": {
+    "SOIL_MEASUREMENT_CLUSTER": [
+      "src/app/clusters/soil-measurement-server/soil-measurement-cluster.cpp"
+    ]
+  },
+  "client": {}
+}

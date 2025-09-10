@@ -1,0 +1,107 @@
+// /* boards/nrf7002dk_nrf5340_cpuapp.overlay */
+
+// #include <zephyr/dt-bindings/ipc_service/static_vrings.h>
+
+// /* ---------- App-specific nodes (ADC etc.) ---------- */
+// &adc {
+//     status = "okay";
+//     #address-cells = <1>;
+//     #size-cells = <0>;
+
+//     channel@0 {
+//         reg = <0>;
+//         zephyr,gain = "ADC_GAIN_1_6";
+//         zephyr,reference = "ADC_REF_INTERNAL";
+//         zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 40)>;
+//         zephyr,input-positive = <NRF_SAADC_AIN0>;
+//         zephyr,resolution = <12>;
+//     };
+
+//     channel@1 {
+//         reg = <1>;
+//         zephyr,gain = "ADC_GAIN_1_6";
+//         zephyr,reference = "ADC_REF_INTERNAL";
+//         zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 40)>;
+//         zephyr,input-positive = <NRF_SAADC_AIN1>;
+//         zephyr,resolution = <12>;
+//     };
+// };
+
+//  / {
+//     zephyr_user: zephyr,user {
+//         io-channels = <&adc 0>, <&adc 1>;
+//     };
+
+//     /* Console on UART1 */
+//     chosen {
+//         zephyr,console = &uart0;
+//         zephyr,log-console = &uart0;
+//         /* Leave external flash line commented unless you use Factory Data later */
+//         // nordic,pm-ext-flash = &mx25r64;
+//     };
+// };
+
+// /* Match Wi-Fi IPC priority you already had */
+// &ipc0 {
+//     zephyr,priority = <0 PRIO_COOP>;
+// };
+
+// /* Make uart1 explicit */
+// &uart0 {
+//     current-speed = <115200>;
+//     status = "okay";
+// };
+
+// /* Optional but helpful: make sure nothing tries to use uart0 */
+// &uart1 {
+//     status = "disabled";
+// };
+
+/* UART0 console + ADC channels + zephyr_user for SoilSensormanager.cpp */
+#include <zephyr/dt-bindings/adc/adc.h>
+
+ / {
+    chosen {
+        zephyr,console = &uart0;
+        zephyr,log-console = &uart0;
+    };
+
+    /* Provide the label your code references */
+    zephyr_user: zephyr,user {
+        /* io-channels: <&adc ch0>, <&adc ch1> */
+        io-channels = <&adc 0>, <&adc 1>;
+    };
+};
+
+/* SAADC channels */
+&adc {
+    status = "okay";
+    #address-cells = <1>;
+    #size-cells = <0>;
+
+    /* SAADC channel 0 on AIN0 (P0.02) */
+    channel@0 {
+        reg = <0>;
+        zephyr,gain = "ADC_GAIN_1_6";
+        zephyr,reference = "ADC_REF_INTERNAL";
+        zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 40)>;
+        zephyr,input-positive = <NRF_SAADC_AIN0>;
+        zephyr,resolution = <12>;
+    };
+
+    /* SAADC channel 1 on AIN1 (P0.03) */
+    channel@1 {
+        reg = <1>;
+        zephyr,gain = "ADC_GAIN_1_6";
+        zephyr,reference = "ADC_REF_INTERNAL";
+        zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 40)>;
+        zephyr,input-positive = <NRF_SAADC_AIN1>;
+        zephyr,resolution = <12>;
+    };
+};
+
+/* Force UART0 as console at 115200 */
+&uart0 {
+    status = "okay";
+    current-speed = <115200>;
+};

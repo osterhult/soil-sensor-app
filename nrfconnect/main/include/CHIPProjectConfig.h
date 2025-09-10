@@ -26,6 +26,22 @@
 
 #pragma once
 
+#include "matter_zephyr_compat.h"
+
+// On Zephyr (Wi‑Fi), use Sockets-based Inet layer instead of LwIP.
+#ifdef CHIP_SYSTEM_CONFIG_USE_LWIP
+#undef CHIP_SYSTEM_CONFIG_USE_LWIP
+#endif
+#define CHIP_SYSTEM_CONFIG_USE_LWIP 0
+
+#ifndef CHIP_SYSTEM_CONFIG_USE_OPENTHREAD_ENDPOINT
+#define CHIP_SYSTEM_CONFIG_USE_OPENTHREAD_ENDPOINT 0
+#endif
+
+// Do NOT force CHIP_DEVICE_CONFIG_ENABLE_CHIPOBLE here; the nRF Connect
+// platform header defines it based on Kconfig (CONFIG_BT). Rely on Kconfig.
+
+
 // All clusters app has 3 group endpoints. This needs to defined here so that
 // CHIP_CONFIG_MAX_GROUPS_PER_FABRIC is properly configured.
 #define CHIP_CONFIG_MAX_GROUP_ENDPOINTS_PER_FABRIC 3

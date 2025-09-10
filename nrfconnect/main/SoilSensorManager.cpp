@@ -61,6 +61,8 @@
 #include <zephyr/drivers/adc.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
+#include <zephyr/sys/util.h>
+#include <errno.h>
 
 static const struct adc_dt_spec adc_channels[] = {
     ADC_DT_SPEC_GET_BY_IDX(DT_NODELABEL(zephyr_user), 0),

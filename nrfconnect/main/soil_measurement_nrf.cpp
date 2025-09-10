@@ -129,15 +129,6 @@ void emberAfSoilMeasurementClusterInitCallback(EndpointId endpoint)
     or app/EmberAfAttributeAccessRegistry.h is available."
 #endif
 
-
-#if defined(HAVE_ATTR_IF_REGISTRY)
-    AttributeAccessInterfaceRegistry::Instance().Register(&gSoilAttrAccess);
-#elif defined(HAVE_EMBER_AF_REGISTRY)
-    EmberAfAttributeAccessRegistry::Instance().Register(&gSoilAttrAccess);
-#elif !defined(HAVE_ATTR_STORAGE)
-    #error "No attribute access registration API found. Please ensure one of: app/util/attribute-storage.h, app/AttributeAccessInterfaceRegistry.h, or app/EmberAfAttributeAccessRegistry.h is available."
-#endif
-
     (void) SystemLayer().StartTimer(System::Clock::Milliseconds32(kUpdateMs), TimerHandler, nullptr);
 }
 
