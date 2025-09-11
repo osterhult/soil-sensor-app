@@ -41,6 +41,8 @@
 #include <clusters/shared/Structs.h>
 // System clock (to set Real Time from Last Known Good Time)
 #include <system/SystemClock.h>
+// Random utils for generating demo measurements
+#include <crypto/RandUtils.h>
 
 LOG_MODULE_REGISTER(soil_app, LOG_LEVEL_INF);
 using namespace chip;
@@ -61,6 +63,25 @@ static chip::app::Clusters::NetworkCommissioning::Instance sWiFiCommissioningIns
 // Soil Measurement cluster instance on endpoint 1
 static chip::app::LazyRegisteredServerCluster<SoilMeasurementCluster> sSoilCluster;
 static constexpr EndpointId kSoilEndpoint = 1;
+static constexpr uint32_t kSoilUpdateMs   = 5000;
+static uint8_t gSoilLast = 101; // invalid sentinel so first update always changes
+
+static void SoilUpdateTimer(System::Layer * layer, void *)
+{
+    uint8_t v = static_cast<uint8_t>(chip::Crypto::GetRandU16() % 101);
+    if (v == gSoilLast)
+    {
+        v = static_cast<uint8_t>((v + 1) % 101);
+    }
+    DataModel::Nullable<Percent> measured;
+    measured.SetNonNull(v);
+    (void) sSoilCluster.Cluster().SetSoilMoistureMeasuredValue(measured);
+    gSoilLast = v;
+    if (layer)
+    {
+        (void) layer->StartTimer(System::Clock::Milliseconds32(kSoilUpdateMs), SoilUpdateTimer, nullptr);
+    }
+}
 // static struct net_mgmt_event_callback s_wifi_cb;
 // static struct net_mgmt_event_callback s_ipv6_cb;
 
@@ -193,10 +214,9 @@ extern "C" int main(void)
         sSoilCluster.Create(kSoilEndpoint, limits);
         (void) app::CodegenDataModelProvider::Instance().Registry().Register(sSoilCluster.Registration());
 
-        // Provide a temporary dummy measured value of 37%
-        DataModel::Nullable<Percent> measured;
-        measured.SetNonNull(static_cast<Percent>(37));
-        (void) sSoilCluster.Cluster().SetSoilMoistureMeasuredValue(measured);
+        // Set an initial random measured value and start periodic updates
+        SoilUpdateTimer(nullptr, nullptr);
+        (void) SystemLayer().StartTimer(System::Clock::Milliseconds32(kSoilUpdateMs), SoilUpdateTimer, nullptr);
     }
 
     // Print device configuration and onboarding codes to UART (like desktop examples)
