@@ -23,6 +23,9 @@
 #include <credentials/examples/DeviceAttestationCredsExample.h>
 // CHIP support utilities
 #include <lib/support/Span.h>
+// Network Commissioning (Wi‑Fi) integration for nRF Connect
+#include <app/clusters/network-commissioning/CodegenInstance.h>
+#include <platform/nrfconnect/wifi/NrfWiFiDriver.h>
 // For custom BLE advertising payload
 #include <platform/Zephyr/BLEManagerImpl.h>
 #include <ble/CHIPBleServiceData.h>
@@ -38,6 +41,12 @@ using namespace chip::DeviceLayer;
 static K_SEM_DEFINE(s_net_ready, 0, 1);
 // Example DeviceInfo provider instance (used to print onboarding info)
 static chip::DeviceLayer::DeviceInfoProviderImpl gExampleDeviceInfoProvider;
+
+#if defined(CONFIG_CHIP_WIFI)
+// Register Network Commissioning cluster (Wi‑Fi) on endpoint 0 using nRF Wi‑Fi driver
+static chip::app::Clusters::NetworkCommissioning::Instance sWiFiCommissioningInstance(
+    0, &(chip::DeviceLayer::NetworkCommissioning::NrfWiFiDriver::Instance()));
+#endif
 // static struct net_mgmt_event_callback s_wifi_cb;
 // static struct net_mgmt_event_callback s_ipv6_cb;
 
@@ -109,68 +118,25 @@ extern "C" int main(void)
         (void) settings_load();
     }
 
-    // Provide custom BLE advertising that includes both the 16-bit Service UUID list and Service Data.
-    // This improves central-side discovery (e.g., CoreBluetooth) when filtering by service UUID.
+#if defined(CONFIG_CHIP_WIFI)
+    // Make Network Commissioning (Wi‑Fi) visible to the data model
+    (void) sWiFiCommissioningInstance.Init();
+#endif
+
+    // Use standard CHIP BLE advertising (service data in ADV, name in scan response).
+    // Only set a distinctive device name for easier discovery.
     {
-        static uint8_t advFlags = BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR;
         Ble::ChipBLEDeviceIdentificationInfo idInfo;
         ConfigurationMgr().GetBLEDeviceIdentificationInfo(idInfo);
-
-        // Set a distinctive BLE device name to spot in scanners, e.g. "SoilSensor-F00" (long discriminator hex)
-        {
-            uint16_t disc = idInfo.GetDeviceDiscriminator();
-            char advName[20];
-            snprintk(advName, sizeof(advName), "SoilSensor-%03X", (unsigned) disc);
-            (void) DeviceLayer::Internal::BLEMgr().SetDeviceName(advName);
-        }
-
-        struct __attribute__((packed)) AdvSvcData
-        {
-            uint8_t uuid[2];
-            Ble::ChipBLEDeviceIdentificationInfo info;
-        };
-
-        static AdvSvcData svc{};
-        svc.uuid[0] = 0xF6; // 0xFFF6 LE
-        svc.uuid[1] = 0xFF;
-        svc.info    = idInfo;
-
-        // Provide a shortened name directly in advertising (shown by many scanners in device list)
-        static char advShortName[12] = { 0 };
-        snprintk(advShortName, sizeof(advShortName), "Soil-%03X", (unsigned) idInfo.GetDeviceDiscriminator());
-
-        const char * name = bt_get_name();
-        // Manufacturer Specific Data with Nordic company ID (0x0059) + discriminator (LE)
-        struct __attribute__((packed)) MfgData
-        {
-            uint16_t company; // 0x0059 (Nordic Semiconductor ASA)
-            uint16_t discr;   // device discriminator (LE)
-        } mfg = { .company = 0x0059, .discr = (uint16_t) idInfo.GetDeviceDiscriminator() };
-
-        static bt_data adv[] = {
-            BT_DATA(BT_DATA_FLAGS, &advFlags, sizeof(advFlags)),
-            BT_DATA_BYTES(BT_DATA_UUID16_ALL, 0xF6, 0xFF),
-            BT_DATA(BT_DATA_NAME_COMPLETE, name, (uint8_t)strlen(name)),
-            BT_DATA(BT_DATA_MANUFACTURER_DATA, &mfg, sizeof(mfg)),
-        };
-
-        static bt_data scanRsp[] = {
-            BT_DATA(BT_DATA_SVC_DATA16, &svc, sizeof(svc)),
-        };
-
-        DeviceLayer::Internal::BLEMgrImpl().SetCustomAdvertising(
-            chip::Span<bt_data>(adv, sizeof(adv) / sizeof(adv[0])));
-        DeviceLayer::Internal::BLEMgrImpl().SetCustomScanResponse(
-            chip::Span<bt_data>(scanRsp, sizeof(scanRsp) / sizeof(scanRsp[0])));
-
-        // Let CHIP BLE manager control advertising; avoid starting Zephyr adv directly here.
+        uint16_t disc = idInfo.GetDeviceDiscriminator();
+        char advName[20];
+        snprintk(advName, sizeof(advName), "SoilSensor-%03X", (unsigned) disc);
+        (void) DeviceLayer::Internal::BLEMgr().SetDeviceName(advName);
     }
 
-    // Start BLE advertising so the commissioner can send Wi-Fi creds
-    chip::DeviceLayer::ConnectivityMgr().SetBLEAdvertisingEnabled(true);
-    LOG_INF("BLE adv requested: enabled=%d adv=%d conns=%u", (int) Internal::BLEMgr().IsAdvertisingEnabled(),
-            (int) Internal::BLEMgr().IsAdvertising(), Internal::BLEMgr().NumConnections());
-    
+    // Defer enabling BLE advertising until after Server init and event loop start
+    // to avoid races where a central connects before rendezvous is fully ready.
+
     chip::CommonCaseDeviceServerInitParams initParams;
     err = initParams.InitializeStaticResourcesBeforeServerInit();
     if (err != CHIP_NO_ERROR) {

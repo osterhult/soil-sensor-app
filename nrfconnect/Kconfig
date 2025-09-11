@@ -13,9 +13,9 @@ endchoice
 
 endif # NET_L2_OPENTHREAD
 
-# # Include CHIP (Matter) feature and default definitions
-# rsource "../connectedhomeip/config/nrfconnect/chip-module/Kconfig.features"
-# rsource "../connectedhomeip/config/nrfconnect/chip-module/Kconfig.defaults"
+# Include CHIP (Matter) feature and default definitions
+rsource "../connectedhomeip/config/nrfconnect/chip-module/Kconfig.features"
+rsource "../connectedhomeip/config/nrfconnect/chip-module/Kconfig.defaults"
 
 # Include Zephyr symbols
 source "Kconfig.zephyr"
