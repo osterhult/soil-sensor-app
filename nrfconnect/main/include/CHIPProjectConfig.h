@@ -47,3 +47,9 @@
 #define CHIP_CONFIG_MAX_GROUP_ENDPOINTS_PER_FABRIC 3
 
 #define CHIP_CONFIG_ENABLE_ACL_EXTENSIONS 1
+
+// Raise or disable long-dispatch warnings to reduce noisy logs from slow Wi‑Fi/BT events
+// 0 disables logging; use a higher value to only warn on very long handlers
+#ifndef CHIP_DISPATCH_EVENT_LONG_DISPATCH_TIME_WARNING_THRESHOLD_MS
+#define CHIP_DISPATCH_EVENT_LONG_DISPATCH_TIME_WARNING_THRESHOLD_MS 300
+#endif

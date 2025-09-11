@@ -39,6 +39,8 @@
 #include <app/clusters/soil-measurement-server/soil-measurement-cluster.h>
 #include <clusters/SoilMeasurement/Attributes.h>
 #include <clusters/shared/Structs.h>
+// System clock (to set Real Time from Last Known Good Time)
+#include <system/SystemClock.h>
 
 LOG_MODULE_REGISTER(soil_app, LOG_LEVEL_INF);
 using namespace chip;
@@ -163,6 +165,9 @@ extern "C" int main(void)
     // Ensure Wi‑Fi commissioning cluster is registered
     (void) sWiFiCommissioningInstance.Init();
 #endif
+
+    // Do not set RealTime from Last Known Good Time here; CASE session handling
+    // will fall back appropriately and update LKG as needed during commissioning.
 
     // Register Soil Measurement cluster (endpoint 1) with limits
     {
