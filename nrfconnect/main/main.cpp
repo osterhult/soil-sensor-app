@@ -14,7 +14,11 @@
 #include <app/server/Server.h>
 #include <data-model-providers/codegen/Instance.h>
 #include <platform/nrfconnect/DeviceInstanceInfoProviderImpl.h>
+#include <platform/CHIPDeviceEvent.h>
+#include <platform/internal/BLEManager.h>
 #include <platform/DeviceInstanceInfoProvider.h>
+#include <DeviceInfoProviderImpl.h>
+#include <setup_payload/OnboardingCodesUtil.h>
 #include <credentials/DeviceAttestationCredsProvider.h>
 #include <credentials/examples/DeviceAttestationCredsExample.h>
 // CHIP support utilities
@@ -24,12 +28,16 @@
 #include <ble/CHIPBleServiceData.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/gap.h>
+#include <zephyr/settings/settings.h>
+#include <string.h>
 
 LOG_MODULE_REGISTER(soil_app, LOG_LEVEL_INF);
 using namespace chip;
 using namespace chip::DeviceLayer;
 
 static K_SEM_DEFINE(s_net_ready, 0, 1);
+// Example DeviceInfo provider instance (used to print onboarding info)
+static chip::DeviceLayer::DeviceInfoProviderImpl gExampleDeviceInfoProvider;
 // static struct net_mgmt_event_callback s_wifi_cb;
 // static struct net_mgmt_event_callback s_ipv6_cb;
 
@@ -50,13 +58,34 @@ static K_SEM_DEFINE(s_net_ready, 0, 1);
 //     }
 // }
 
+static void AppEventHandler(const chip::DeviceLayer::ChipDeviceEvent * event, intptr_t /* arg */)
+{
+    using namespace chip::DeviceLayer;
+    switch (event->Type)
+    {
+    case DeviceEventType::kCHIPoBLEAdvertisingChange:
+        LOG_INF("BLE adv change: result=%d enabled=%d adv=%d conns=%u",
+                (int) event->CHIPoBLEAdvertisingChange.Result, (int) Internal::BLEMgr().IsAdvertisingEnabled(),
+                (int) Internal::BLEMgr().IsAdvertising(), Internal::BLEMgr().NumConnections());
+        break;
+    case DeviceEventType::kCHIPoBLEConnectionEstablished:
+        LOG_INF("BLE connection established");
+        break;
+    case DeviceEventType::kCHIPoBLEConnectionClosed:
+        LOG_INF("BLE connection closed");
+        break;
+    default:
+        break;
+    }
+}
+
 extern "C" int main(void)
 {
     printk("boot\n");
     LOG_INF("Soil sensor app started.");
 
-    // Init NVS/settings etc (if you have it)
-    // settings_subsys_init();
+    // Do not load settings yet; BLE Manager enables BT and will register
+    // its settings handlers. We load settings right after CHIP stack init.
 
     // Start Matter immediately (no pre-wifi wait!)
     CHIP_ERROR err = PlatformMgr().InitChipStack();
@@ -68,8 +97,17 @@ extern "C" int main(void)
     // Provide development Device Attestation Credentials (DAC) for commissioning
     Credentials::SetDeviceAttestationCredentialsProvider(Credentials::Examples::GetExampleDACProvider());
 
-    // Register DeviceInfoProvider (removes "DeviceInfoProvider is not registered" log)
+    // Register providers that some clusters expect
     DeviceLayer::SetDeviceInstanceInfoProvider(&DeviceLayer::DeviceInstanceInfoProviderMgrImpl());
+    DeviceLayer::SetDeviceInfoProvider(&gExampleDeviceInfoProvider);
+
+    // Register a handler for BLE-related and other platform events
+    PlatformMgr().AddEventHandler(AppEventHandler, 0);
+
+    // Load Zephyr settings now that CHIP stack (and BT) are initialized.
+    if (IS_ENABLED(CONFIG_BT_SETTINGS)) {
+        (void) settings_load();
+    }
 
     // Provide custom BLE advertising that includes both the 16-bit Service UUID list and Service Data.
     // This improves central-side discovery (e.g., CoreBluetooth) when filtering by service UUID.
@@ -77,6 +115,14 @@ extern "C" int main(void)
         static uint8_t advFlags = BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR;
         Ble::ChipBLEDeviceIdentificationInfo idInfo;
         ConfigurationMgr().GetBLEDeviceIdentificationInfo(idInfo);
+
+        // Set a distinctive BLE device name to spot in scanners, e.g. "SoilSensor-F00" (long discriminator hex)
+        {
+            uint16_t disc = idInfo.GetDeviceDiscriminator();
+            char advName[20];
+            snprintk(advName, sizeof(advName), "SoilSensor-%03X", (unsigned) disc);
+            (void) DeviceLayer::Internal::BLEMgr().SetDeviceName(advName);
+        }
 
         struct __attribute__((packed)) AdvSvcData
         {
@@ -89,24 +135,41 @@ extern "C" int main(void)
         svc.uuid[1] = 0xFF;
         svc.info    = idInfo;
 
+        // Provide a shortened name directly in advertising (shown by many scanners in device list)
+        static char advShortName[12] = { 0 };
+        snprintk(advShortName, sizeof(advShortName), "Soil-%03X", (unsigned) idInfo.GetDeviceDiscriminator());
+
+        const char * name = bt_get_name();
+        // Manufacturer Specific Data with Nordic company ID (0x0059) + discriminator (LE)
+        struct __attribute__((packed)) MfgData
+        {
+            uint16_t company; // 0x0059 (Nordic Semiconductor ASA)
+            uint16_t discr;   // device discriminator (LE)
+        } mfg = { .company = 0x0059, .discr = (uint16_t) idInfo.GetDeviceDiscriminator() };
+
         static bt_data adv[] = {
             BT_DATA(BT_DATA_FLAGS, &advFlags, sizeof(advFlags)),
             BT_DATA_BYTES(BT_DATA_UUID16_ALL, 0xF6, 0xFF),
-            BT_DATA(BT_DATA_SVC_DATA16, &svc, sizeof(svc)),
+            BT_DATA(BT_DATA_NAME_COMPLETE, name, (uint8_t)strlen(name)),
+            BT_DATA(BT_DATA_MANUFACTURER_DATA, &mfg, sizeof(mfg)),
         };
 
-        const char * name = bt_get_name();
-        static bt_data scanRsp[1];
-        scanRsp[0] = BT_DATA(BT_DATA_NAME_COMPLETE, name, (uint8_t)strlen(name));
+        static bt_data scanRsp[] = {
+            BT_DATA(BT_DATA_SVC_DATA16, &svc, sizeof(svc)),
+        };
 
         DeviceLayer::Internal::BLEMgrImpl().SetCustomAdvertising(
             chip::Span<bt_data>(adv, sizeof(adv) / sizeof(adv[0])));
         DeviceLayer::Internal::BLEMgrImpl().SetCustomScanResponse(
             chip::Span<bt_data>(scanRsp, sizeof(scanRsp) / sizeof(scanRsp[0])));
+
+        // Let CHIP BLE manager control advertising; avoid starting Zephyr adv directly here.
     }
 
     // Start BLE advertising so the commissioner can send Wi-Fi creds
     chip::DeviceLayer::ConnectivityMgr().SetBLEAdvertisingEnabled(true);
+    LOG_INF("BLE adv requested: enabled=%d adv=%d conns=%u", (int) Internal::BLEMgr().IsAdvertisingEnabled(),
+            (int) Internal::BLEMgr().IsAdvertising(), Internal::BLEMgr().NumConnections());
     
     chip::CommonCaseDeviceServerInitParams initParams;
     err = initParams.InitializeStaticResourcesBeforeServerInit();
@@ -120,6 +183,20 @@ extern "C" int main(void)
     err = chip::Server::GetInstance().Init(initParams);
 
     if (err != CHIP_NO_ERROR) { LOG_ERR("Matter Server init failed: %ld", (long)err.AsInteger()); return -2; }
+
+    // Print device configuration and onboarding codes to UART (like desktop examples)
+    ConfigurationMgr().LogDeviceConfig();
+    PrintOnboardingCodes(chip::RendezvousInformationFlags(chip::RendezvousInformationFlag::kBLE));
+
+    // Start CHIP event loop thread (required for BLE and commissioning flows)
+    err = PlatformMgr().StartEventLoopTask();
+    if (err != CHIP_NO_ERROR) {
+        LOG_ERR("StartEventLoopTask failed: %ld", (long)err.AsInteger());
+    }
+
+    // Ensure DeviceInfo provider uses persistent storage from the server
+    gExampleDeviceInfoProvider.SetStorageDelegate(&chip::Server::GetInstance().GetPersistentStorage());
+    DeviceLayer::SetDeviceInfoProvider(&gExampleDeviceInfoProvider);
 
     ConnectivityMgr().SetBLEAdvertisingEnabled(true);
     LOG_INF("Matter server started; BLE advertising enabled.");
@@ -162,6 +239,7 @@ extern "C" int main(void)
 //     err = chip::Server::GetInstance().Init(params);
 //     if (err != CHIP_NO_ERROR) { LOG_ERR("Matter Server init failed: %ld", (long)err.AsInteger()); return -2; }
 
+// (duplicate removed) gExampleDeviceInfoProvider already defined above
 //     ConnectivityMgr().SetBLEAdvertisingEnabled(true);
 //     LOG_INF("Matter server started; BLE advertising enabled.");
 

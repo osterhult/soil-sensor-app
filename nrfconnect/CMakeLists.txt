@@ -69,12 +69,15 @@ target_sources(app PRIVATE
   ${CMAKE_CURRENT_LIST_DIR}/main/SoilSensorManager.cpp
   ${CMAKE_CURRENT_LIST_DIR}/main/soil_measurement_nrf.cpp
   ${CHIP_ROOT}/src/credentials/examples/ExampleDACs.cpp
+  # Bring in example DeviceInfoProvider used by Nordic samples to print onboarding info
+  ${CHIP_ROOT}/examples/providers/DeviceInfoProviderImpl.cpp
 )
 
 # App-local includes; ZAP includes are added by chip_configure_data_model()
 target_include_directories(app PRIVATE
   ${CMAKE_CURRENT_LIST_DIR}/main/include
   ${SOILSENSOR_COMMON}
+  ${CHIP_ROOT}/examples/providers
 )
 
 # Also pre-include the compat header for non-GN app sources (e.g. attribute-storage.cpp)
