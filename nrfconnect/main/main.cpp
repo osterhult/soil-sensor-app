@@ -1,14 +1,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
-#include <zephyr/net/net_if.h>
-#include <zephyr/net/net_mgmt.h>
-#include <zephyr/net/net_event.h>
-#include <zephyr/net/wifi_mgmt.h>
-
-#if defined(CONFIG_DK_LIBRARY)
-#include <dk_buttons_and_leds.h>
-#endif
+// (No direct Zephyr net/shell usage in current app)
 
 #include <platform/CHIPDeviceLayer.h>
 #include <app/server/Server.h>
@@ -26,11 +19,6 @@
 // Network Commissioning (Wi‑Fi) integration for nRF Connect
 #include <app/clusters/network-commissioning/CodegenInstance.h>
 #include <platform/nrfconnect/wifi/NrfWiFiDriver.h>
-// For custom BLE advertising payload
-#include <platform/Zephyr/BLEManagerImpl.h>
-#include <ble/CHIPBleServiceData.h>
-#include <zephyr/bluetooth/bluetooth.h>
-#include <zephyr/bluetooth/gap.h>
 #include <zephyr/settings/settings.h>
 #include <string.h>
 
@@ -50,7 +38,6 @@ using namespace chip::DeviceLayer;
 using namespace chip::app;
 using namespace chip::app::Clusters;
 
-static K_SEM_DEFINE(s_net_ready, 0, 1);
 // Example DeviceInfo provider instance (used to print onboarding info)
 static chip::DeviceLayer::DeviceInfoProviderImpl gExampleDeviceInfoProvider;
 
@@ -82,25 +69,7 @@ static void SoilUpdateTimer(System::Layer * layer, void *)
         (void) layer->StartTimer(System::Clock::Milliseconds32(kSoilUpdateMs), SoilUpdateTimer, nullptr);
     }
 }
-// static struct net_mgmt_event_callback s_wifi_cb;
-// static struct net_mgmt_event_callback s_ipv6_cb;
-
-// static void wifi_event_handler(struct net_mgmt_event_callback *cb,
-//                                uint32_t event, struct net_if *iface)
-// {
-//     if (event == NET_EVENT_WIFI_CONNECT_RESULT) {
-//         const struct wifi_status *st = (const struct wifi_status *)cb->info;
-//         if (st && st->status == 0) { k_sem_give(&s_net_ready); }
-//     }
-// }
-
-// static void ipv6_event_handler(struct net_mgmt_event_callback *cb,
-//                                uint32_t event, struct net_if *iface)
-// {
-//     if (event == NET_EVENT_IPV6_ADDR_ADD) {
-//         if (iface) { k_sem_give(&s_net_ready); }
-//     }
-// }
+// (Removed legacy net_mgmt callbacks; not used)
 
 static void AppEventHandler(const chip::DeviceLayer::ChipDeviceEvent * event, intptr_t /* arg */)
 {
@@ -241,22 +210,6 @@ extern "C" int main(void)
 
 
 
-// extern "C" int main(void)
-// {
-
-//     LOG_INF("Soil sensor app started.");
-
-// #if defined(CONFIG_DK_LIBRARY)
-//     dk_leds_init();
-//     for (int i = 0; i < 4; ++i) { dk_set_led_on(DK_LED1); k_msleep(80); dk_set_led_off(DK_LED1); k_msleep(80); }
-// #endif
-
-//     /* Wait for Wi-Fi connect or any IPv6 on a non-loopback iface */
-//     net_mgmt_init_event_callback(&s_wifi_cb, wifi_event_handler, NET_EVENT_WIFI_CONNECT_RESULT);
-//     net_mgmt_add_event_callback(&s_wifi_cb);
-
-//     net_mgmt_init_event_callback(&s_ipv6_cb, ipv6_event_handler, NET_EVENT_IPV6_ADDR_ADD);
-//     net_mgmt_add_event_callback(&s_ipv6_cb);
 
 //     LOG_INF("Waiting for Wi-Fi or IPv6 address...");
 //     if (k_sem_take(&s_net_ready, K_SECONDS(60)) != 0) {
