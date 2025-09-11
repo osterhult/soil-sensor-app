@@ -18,3 +18,7 @@ connectedhomeip
 
 # --- Python virtualenvs ---
 .venv/
+
+# --- Misc backups ---
+*.bak
+*.alt
