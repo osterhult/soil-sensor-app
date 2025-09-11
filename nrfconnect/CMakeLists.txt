@@ -67,7 +67,6 @@ target_compile_options(app PRIVATE -Werror -Wno-error=maybe-uninitialized -Wno-e
 target_sources(app PRIVATE
   ${CMAKE_CURRENT_LIST_DIR}/main/main.cpp
   ${CMAKE_CURRENT_LIST_DIR}/main/SoilSensorManager.cpp
-  ${CMAKE_CURRENT_LIST_DIR}/main/soil_measurement_nrf.cpp
   ${CHIP_ROOT}/src/credentials/examples/ExampleDACs.cpp
   # Bring in example DeviceInfoProvider used by Nordic samples to print onboarding info
   ${CHIP_ROOT}/examples/providers/DeviceInfoProviderImpl.cpp

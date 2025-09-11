@@ -34,9 +34,17 @@
 #include <zephyr/settings/settings.h>
 #include <string.h>
 
+// Soil Measurement cluster (server) integration
+#include <app/server-cluster/ServerClusterInterfaceRegistry.h>
+#include <app/clusters/soil-measurement-server/soil-measurement-cluster.h>
+#include <clusters/SoilMeasurement/Attributes.h>
+#include <clusters/shared/Structs.h>
+
 LOG_MODULE_REGISTER(soil_app, LOG_LEVEL_INF);
 using namespace chip;
 using namespace chip::DeviceLayer;
+using namespace chip::app;
+using namespace chip::app::Clusters;
 
 static K_SEM_DEFINE(s_net_ready, 0, 1);
 // Example DeviceInfo provider instance (used to print onboarding info)
@@ -47,6 +55,10 @@ static chip::DeviceLayer::DeviceInfoProviderImpl gExampleDeviceInfoProvider;
 static chip::app::Clusters::NetworkCommissioning::Instance sWiFiCommissioningInstance(
     0, &(chip::DeviceLayer::NetworkCommissioning::NrfWiFiDriver::Instance()));
 #endif
+
+// Soil Measurement cluster instance on endpoint 1
+static chip::app::LazyRegisteredServerCluster<SoilMeasurementCluster> sSoilCluster;
+static constexpr EndpointId kSoilEndpoint = 1;
 // static struct net_mgmt_event_callback s_wifi_cb;
 // static struct net_mgmt_event_callback s_ipv6_cb;
 
@@ -118,10 +130,7 @@ extern "C" int main(void)
         (void) settings_load();
     }
 
-#if defined(CONFIG_CHIP_WIFI)
-    // Make Network Commissioning (Wi‑Fi) visible to the data model
-    (void) sWiFiCommissioningInstance.Init();
-#endif
+// (Wi‑Fi commissioning registration moved after Server init)
 
     // Use standard CHIP BLE advertising (service data in ADV, name in scan response).
     // Only set a distinctive device name for easier discovery.
@@ -149,6 +158,41 @@ extern "C" int main(void)
     err = chip::Server::GetInstance().Init(initParams);
 
     if (err != CHIP_NO_ERROR) { LOG_ERR("Matter Server init failed: %ld", (long)err.AsInteger()); return -2; }
+
+#if defined(CONFIG_CHIP_WIFI)
+    // Ensure Wi‑Fi commissioning cluster is registered
+    (void) sWiFiCommissioningInstance.Init();
+#endif
+
+    // Register Soil Measurement cluster (endpoint 1) with limits
+    {
+        using LimitsType = SoilMeasurement::Attributes::SoilMoistureMeasurementLimits::TypeInfo::Type;
+        using RangeType  = chip::app::Clusters::Globals::Structs::MeasurementAccuracyRangeStruct::Type;
+
+        static const RangeType kRanges[] = {
+            {
+                .rangeMin   = 0,
+                .rangeMax   = 100,
+                .percentMax = MakeOptional(static_cast<Percent100ths>(500)) // ±5.00%% demo accuracy
+            },
+        };
+
+        const LimitsType limits = {
+            .measurementType  = chip::app::Clusters::Globals::MeasurementTypeEnum::kSoilMoisture,
+            .measured         = true,
+            .minMeasuredValue = 0,
+            .maxMeasuredValue = 100,
+            .accuracyRanges   = DataModel::List<const RangeType>(kRanges),
+        };
+
+        sSoilCluster.Create(kSoilEndpoint, limits);
+        (void) app::CodegenDataModelProvider::Instance().Registry().Register(sSoilCluster.Registration());
+
+        // Provide a temporary dummy measured value of 37%
+        DataModel::Nullable<Percent> measured;
+        measured.SetNonNull(static_cast<Percent>(37));
+        (void) sSoilCluster.Cluster().SetSoilMoistureMeasuredValue(measured);
+    }
 
     // Print device configuration and onboarding codes to UART (like desktop examples)
     ConfigurationMgr().LogDeviceConfig();
