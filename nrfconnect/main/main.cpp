@@ -6,6 +6,8 @@
 #include <platform/CHIPDeviceLayer.h>
 #include <app/server/Server.h>
 #include <data-model-providers/codegen/Instance.h>
+#include <app/clusters/basic-information/BasicInformationCluster.h>
+#include "SoilDeviceInfoProvider.h"
 #include <platform/nrfconnect/DeviceInstanceInfoProviderImpl.h>
 #include <platform/CHIPDeviceEvent.h>
 #include <platform/internal/BLEManager.h>
@@ -25,6 +27,7 @@
 // Soil Measurement cluster (server) integration
 #include <app/server-cluster/ServerClusterInterfaceRegistry.h>
 #include <app/clusters/soil-measurement-server/soil-measurement-cluster.h>
+#include <clusters/BasicInformation/Attributes.h>
 #include <clusters/SoilMeasurement/Attributes.h>
 #include <clusters/shared/Structs.h>
 // System clock (to set Real Time from Last Known Good Time)
@@ -78,8 +81,8 @@ static void AppEventHandler(const chip::DeviceLayer::ChipDeviceEvent * event, in
     {
     case DeviceEventType::kCHIPoBLEAdvertisingChange:
         LOG_INF("BLE adv change: result=%d enabled=%d adv=%d conns=%u",
-                (int) event->CHIPoBLEAdvertisingChange.Result, (int) Internal::BLEMgr().IsAdvertisingEnabled(),
-                (int) Internal::BLEMgr().IsAdvertising(), Internal::BLEMgr().NumConnections());
+                (int) event->CHIPoBLEAdvertisingChange.Result, (int) DeviceLayer::Internal::BLEMgr().IsAdvertisingEnabled(),
+                (int) DeviceLayer::Internal::BLEMgr().IsAdvertising(), DeviceLayer::Internal::BLEMgr().NumConnections());
         break;
     case DeviceEventType::kCHIPoBLEConnectionEstablished:
         LOG_INF("BLE connection established");
@@ -111,7 +114,33 @@ extern "C" int main(void)
     Credentials::SetDeviceAttestationCredentialsProvider(Credentials::Examples::GetExampleDACProvider());
 
     // Register providers that some clusters expect
-    DeviceLayer::SetDeviceInstanceInfoProvider(&DeviceLayer::DeviceInstanceInfoProviderMgrImpl());
+    DeviceLayer::SetDeviceInstanceInfoProvider(&DeviceLayer::SoilDeviceInstanceInfoProvider::Instance());
+    BasicInformationCluster::Instance().OptionalAttributes()
+        .Set<BasicInformation::Attributes::ManufacturingDate::Id>()
+        .Set<BasicInformation::Attributes::PartNumber::Id>()
+        .Set<BasicInformation::Attributes::ProductURL::Id>()
+        .Set<BasicInformation::Attributes::ProductLabel::Id>()
+        .Set<BasicInformation::Attributes::SerialNumber::Id>()
+        .Set<BasicInformation::Attributes::ProductAppearance::Id>();
+    {
+        char countryCode[DeviceLayer::ConfigurationManager::kMaxLocationLength + 1] = {};
+        size_t codeLen                                                               = 0;
+        CHIP_ERROR locationErr = ConfigurationMgr().GetCountryCode(countryCode, sizeof(countryCode), codeLen);
+        if ((locationErr != CHIP_NO_ERROR) || (codeLen != 2) || (strncmp(countryCode, "SE", 2) != 0))
+        {
+            (void) ConfigurationMgr().StoreCountryCode("SE", 2);
+        }
+
+        uint16_t year;
+        uint8_t month;
+        uint8_t day;
+        constexpr char kManufacturingDate[] = "2024-01-15";
+        CHIP_ERROR mfgErr = SoilDeviceInstanceInfoProvider::Instance().GetManufacturingDate(year, month, day);
+        if ((mfgErr != CHIP_NO_ERROR) || (year != 2024) || (month != 1) || (day != 15))
+        {
+            (void) ConfigurationMgr().StoreManufacturingDate(kManufacturingDate, strlen(kManufacturingDate));
+        }
+    }
     DeviceLayer::SetDeviceInfoProvider(&gExampleDeviceInfoProvider);
 
     // Register a handler for BLE-related and other platform events
