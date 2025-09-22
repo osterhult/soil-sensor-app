@@ -197,7 +197,7 @@ extern "C" int main(void)
             {
                 .rangeMin   = 0,
                 .rangeMax   = 100,
-                .percentMax = MakeOptional(static_cast<Percent100ths>(500)) // ±5.00%% demo accuracy
+                .percentMax = MakeOptional(static_cast<Percent100ths>(5)) // 5%
             },
         };
 
