@@ -237,28 +237,3 @@ extern "C" int main(void)
     while (true) { k_sleep(K_SECONDS(5)); }
 }
 
-
-
-
-//     LOG_INF("Waiting for Wi-Fi or IPv6 address...");
-//     if (k_sem_take(&s_net_ready, K_SECONDS(60)) != 0) {
-//         LOG_WRN("No Wi-Fi/IPv6 within 60s; delaying Matter startup.");
-//         /* If you want to hard-require network, return here. */
-//         /* return -1; */
-//     }
-
-//     CHIP_ERROR err = PlatformMgr().InitChipStack();
-//     if (err != CHIP_NO_ERROR) { LOG_ERR("InitChipStack failed: %ld", (long)err.AsInteger()); return -1; }
-
-//     Credentials::SetDeviceAttestationCredentialsProvider(Credentials::Examples::GetExampleDACProvider());
-
-//     chip::ServerInitParams params;
-//     err = chip::Server::GetInstance().Init(params);
-//     if (err != CHIP_NO_ERROR) { LOG_ERR("Matter Server init failed: %ld", (long)err.AsInteger()); return -2; }
-
-// (duplicate removed) gExampleDeviceInfoProvider already defined above
-//     ConnectivityMgr().SetBLEAdvertisingEnabled(true);
-//     LOG_INF("Matter server started; BLE advertising enabled.");
-
-//     while (true) { k_sleep(K_SECONDS(5)); }
-// }
