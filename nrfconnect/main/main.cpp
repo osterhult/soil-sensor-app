@@ -16,6 +16,7 @@
 #include <setup_payload/OnboardingCodesUtil.h>
 #include <credentials/DeviceAttestationCredsProvider.h>
 #include <credentials/examples/DeviceAttestationCredsExample.h>
+#include <access/AccessControl.h>
 // CHIP support utilities
 #include <lib/support/Span.h>
 // Network Commissioning (Wi‑Fi) integration for nRF Connect
@@ -40,6 +41,22 @@ using namespace chip;
 using namespace chip::DeviceLayer;
 using namespace chip::app;
 using namespace chip::app::Clusters;
+
+
+
+// Minimal resolver required by your AccessControl::Init(delegate, resolver) API.
+class NoopDeviceTypeResolver : public chip::Access::AccessControl::DeviceTypeResolver {
+public:
+    bool IsDeviceTypeOnEndpoint(chip::DeviceTypeId /*deviceType*/,
+                                chip::EndpointId /*endpoint*/) override
+    {
+        return false;
+    }
+};
+
+static NoopDeviceTypeResolver gNoopResolver;
+
+
 
 // Example DeviceInfo provider instance (used to print onboarding info)
 static chip::DeviceLayer::DeviceInfoProviderImpl gExampleDeviceInfoProvider;
@@ -123,12 +140,18 @@ extern "C" int main(void)
         .Set<BasicInformation::Attributes::SerialNumber::Id>()
         .Set<BasicInformation::Attributes::ProductAppearance::Id>();
     {
+        constexpr char kDefaultCountryCode[] = "SE";
         char countryCode[DeviceLayer::ConfigurationManager::kMaxLocationLength + 1] = {};
         size_t codeLen                                                               = 0;
         CHIP_ERROR locationErr = ConfigurationMgr().GetCountryCode(countryCode, sizeof(countryCode), codeLen);
-        if ((locationErr != CHIP_NO_ERROR) || (codeLen != 2) || (strncmp(countryCode, "SE", 2) != 0))
+
+        if ((locationErr != CHIP_NO_ERROR) || (codeLen != sizeof(kDefaultCountryCode) - 1))
         {
-            (void) ConfigurationMgr().StoreCountryCode("SE", 2);
+            // Only populate a default when nothing has been provisioned yet.
+            if (ConfigurationMgr().StoreCountryCode(kDefaultCountryCode, sizeof(kDefaultCountryCode) - 1) != CHIP_NO_ERROR)
+            {
+                LOG_WRN("Failed to persist default country code");
+            }
         }
 
         uint16_t year;
@@ -179,6 +202,26 @@ extern "C" int main(void)
     err = chip::Server::GetInstance().Init(initParams);
 
     if (err != CHIP_NO_ERROR) { LOG_ERR("Matter Server init failed: %ld", (long)err.AsInteger()); return -2; }
+
+
+   // --- ACL init & commissioning window hygiene ---
+    {
+        auto & server = chip::Server::GetInstance();
+
+        // AccessControl init (your working version)
+        auto & ac = chip::Access::GetAccessControl();
+        CHIP_ERROR acErr = ac.Init(/*delegate*/ nullptr, gNoopResolver);
+        if (acErr != CHIP_NO_ERROR && acErr != CHIP_ERROR_INCORRECT_STATE) {
+            LOG_ERR("AccessControl init failed: %ld", (long) acErr.AsInteger());
+        }
+
+        // Only close an *existing* window on already-commissioned devices.
+        // For first-boot (no fabrics), keep the default window open for PASE.
+        if (server.GetFabricTable().FabricCount() > 0) {
+            server.GetCommissioningWindowManager().CloseCommissioningWindow();
+        }
+    }   
+    // --- end ACL init ---
 
 #if defined(CONFIG_CHIP_WIFI)
     // Ensure Wi‑Fi commissioning cluster is registered
@@ -236,4 +279,3 @@ extern "C" int main(void)
 
     while (true) { k_sleep(K_SECONDS(5)); }
 }
-

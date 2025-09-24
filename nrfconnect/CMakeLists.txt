@@ -6,6 +6,12 @@ set(CHIP_ROOT "/Users/osterhult/Kod/Matter/connectedhomeip" CACHE PATH "")
 get_filename_component(CHIP_ROOT "${CHIP_ROOT}" REALPATH)
 message(STATUS "CHIP_ROOT = ${CHIP_ROOT}")
 
+# Make sure the GN build of Matter sees the Access Control Extension compile-time flag
+# before the chip-module CMake logic runs (triggered by find_package(Zephyr)).
+list(APPEND MATTER_CFLAGS "-DCHIP_CONFIG_ENABLE_ACL_EXTENSIONS=1")
+list(APPEND MATTER_CFLAGS_C "-DCHIP_CONFIG_ENABLE_ACL_EXTENSIONS=1")
+list(APPEND MATTER_CFLAGS_CC "-DCHIP_CONFIG_ENABLE_ACL_EXTENSIONS=1")
+
 # Ensure we’re on a compatible NCS/Zephyr
 include(${CHIP_ROOT}/config/nrfconnect/app/check-nrfconnect-version.cmake)
 
@@ -62,6 +68,7 @@ chip_configure_data_model(app
 # -Wmaybe-uninitialized has too many false positives (same as Nordic examples)
 # Be strict but avoid noisy false positives from some generated code
 target_compile_options(app PRIVATE -Werror -Wno-error=maybe-uninitialized -Wno-error=array-bounds -Wno-error=stringop-overread -Wno-error=stringop-overflow)
+target_compile_definitions(app PRIVATE CHIP_CONFIG_ENABLE_ACL_EXTENSIONS=1)
 
 # === Sources / includes ===
 target_sources(app PRIVATE
