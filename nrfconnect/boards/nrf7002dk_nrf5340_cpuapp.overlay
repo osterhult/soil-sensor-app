@@ -27,7 +27,7 @@
     };
 };
 
- / {
+/ {
     zephyr_user: zephyr,user {
         io-channels = <&adc 0>, <&adc 1>;
     };
@@ -37,6 +37,7 @@
         zephyr,console = &uart0;
         zephyr,log-console = &uart0;
         nordic,pm-ext-flash = &mx25r64;
+        // zephyr,settings-partition = &storage_partition;
     };
 };
 

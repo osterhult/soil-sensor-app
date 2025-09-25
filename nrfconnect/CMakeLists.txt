@@ -6,6 +6,9 @@ set(CHIP_ROOT "/Users/osterhult/Kod/Matter/connectedhomeip" CACHE PATH "")
 get_filename_component(CHIP_ROOT "${CHIP_ROOT}" REALPATH)
 message(STATUS "CHIP_ROOT = ${CHIP_ROOT}")
 
+# Ensure ZAP writes its log into the build tree to avoid permission issues in home directory
+set(ENV{ZAP_LOG_PATH} "${CMAKE_BINARY_DIR}/zap.log")
+
 # Make sure the GN build of Matter sees the Access Control Extension compile-time flag
 # before the chip-module CMake logic runs (triggered by find_package(Zephyr)).
 list(APPEND MATTER_CFLAGS "-DCHIP_CONFIG_ENABLE_ACL_EXTENSIONS=1")

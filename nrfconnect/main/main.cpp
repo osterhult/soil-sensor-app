@@ -16,6 +16,7 @@
 #include <setup_payload/OnboardingCodesUtil.h>
 #include <credentials/DeviceAttestationCredsProvider.h>
 #include <credentials/examples/DeviceAttestationCredsExample.h>
+#include <lib/core/ErrorStr.h>
 #include <access/AccessControl.h>
 // CHIP support utilities
 #include <lib/support/Span.h>
@@ -121,9 +122,15 @@ extern "C" int main(void)
     // its settings handlers. We load settings right after CHIP stack init.
 
     // Start Matter immediately (no pre-wifi wait!)
+    int settingsStatus = settings_subsys_init();
+    if (settingsStatus) {
+        LOG_ERR("settings_subsys_init failed: %d", settingsStatus);
+        return 0;
+    }
+
     CHIP_ERROR err = PlatformMgr().InitChipStack();
     if (err != CHIP_NO_ERROR) {
-        LOG_ERR("InitChipStack failed: %d", err.AsInteger());
+        LOG_ERR("InitChipStack failed: %s (%" CHIP_ERROR_FORMAT ")", chip::ErrorStr(err), err.Format());
         return 0;
     }
 
