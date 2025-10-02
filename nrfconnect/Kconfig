@@ -50,3 +50,10 @@ config CHIP_WIFI_CONNECTION_RECOVERY_MAX_RETRIES_NUMBER
 config CHIP_WIFI
     bool "Enable CHIP Wi-Fi path"
     default y
+
+config CHIP_DEVICE_COUNTRY_CODE
+    string "CHIP device country code"
+    default "US"
+    help
+      Two-letter ISO 3166-1 country code reported via the Basic Information
+      cluster. Configure this to reflect the device's manufacturing locale.

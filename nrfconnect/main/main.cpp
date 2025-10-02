@@ -147,7 +147,10 @@ extern "C" int main(void)
         .Set<BasicInformation::Attributes::SerialNumber::Id>()
         .Set<BasicInformation::Attributes::ProductAppearance::Id>();
     {
-        constexpr char kDefaultCountryCode[] = "SE";
+        constexpr char kDefaultCountryCode[] = CONFIG_CHIP_DEVICE_COUNTRY_CODE;
+        static_assert(sizeof(kDefaultCountryCode) > 1, "CONFIG_CHIP_DEVICE_COUNTRY_CODE must not be empty");
+        static_assert(sizeof(kDefaultCountryCode) - 1 <= DeviceLayer::ConfigurationManager::kMaxLocationLength,
+                      "CONFIG_CHIP_DEVICE_COUNTRY_CODE exceeds the maximum Basic Information country code length");
         char countryCode[DeviceLayer::ConfigurationManager::kMaxLocationLength + 1] = {};
         size_t codeLen                                                               = 0;
         CHIP_ERROR locationErr = ConfigurationMgr().GetCountryCode(countryCode, sizeof(countryCode), codeLen);
