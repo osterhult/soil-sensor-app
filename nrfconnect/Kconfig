@@ -1,5 +1,9 @@
 mainmenu "Matter nRF Connect Soil Sensor Example Application"
 
+config STATE_LEDS
+    bool "Use LEDs to indicate the device state"
+    default y
+
 # Thread networking setup
 if NET_L2_OPENTHREAD
 

@@ -9,10 +9,14 @@
 
 #include <platform/CHIPDeviceLayer.h>
 #include <app/server/AppDelegate.h>
+#include <app/server/CommissioningWindowManager.h>
+#include <app/server/Dnssd.h>
 #include <app/server/Server.h>
+#include <app/CASESessionManager.h>
 #include <data-model-providers/codegen/Instance.h>
 #include <app/clusters/basic-information/BasicInformationCluster.h>
 #include "SoilDeviceInfoProvider.h"
+#include "AppTask.h"
 #include <platform/nrfconnect/DeviceInstanceInfoProviderImpl.h>
 #include <platform/CHIPDeviceEvent.h>
 #include <platform/internal/BLEManager.h>
@@ -22,9 +26,11 @@
 #include <credentials/DeviceAttestationCredsProvider.h>
 #include <credentials/examples/DeviceAttestationCredsExample.h>
 #include <credentials/FabricTable.h>
+#include <credentials/GroupDataProvider.h>
 #include <credentials/GroupDataProviderImpl.h>
 #include <lib/core/Optional.h>
 #include <lib/core/ErrorStr.h>
+#include <lib/core/CHIPError.h>
 #include <access/AccessControl.h>
 // CHIP support utilities
 #include <lib/support/Span.h>
@@ -42,17 +48,25 @@
 #include <app/reporting/Engine.h>
 #include <app/util/attribute-storage.h>
 #include <platform/nrfconnect/wifi/NrfWiFiDriver.h>
+#include <protocols/secure_channel/SessionResumptionStorage.h>
 #include <transport/Session.h>
 #include <transport/SessionManager.h>
 #include <transport/SecureSession.h>
 #include <zephyr/settings/settings.h>
 #include <string.h>
 
+#include <vector>
+
 #include <lib/support/CodeUtils.h>
 #include <lib/support/LinkedList.h>
 #include <lib/support/logging/CHIPLogging.h>
 
+#include <lib/dnssd/Advertiser.h>
+
 #include <messaging/ReliableMessageProtocolConfig.h>
+
+#include <platform/ConfigurationManager.h>
+#include <platform/KeyValueStoreManager.h>
 
 #ifdef CONFIG_PM
 #include <zephyr/pm/pm.h>
@@ -99,610 +113,17 @@ static chip::DeviceLayer::DeviceInfoProviderImpl gExampleDeviceInfoProvider;
 namespace
 {
 
-constexpr chip::NodeId kCaseAdminSubjectId = 0x0000000000000002ULL;
-
-constexpr chip::System::Clock::Milliseconds32 kEp0AclKeepAliveInterval = chip::System::Clock::Milliseconds32(1500);
-constexpr chip::System::Clock::Milliseconds32 kFabricEvictionDelay     = chip::System::Clock::Milliseconds32(60000);
-constexpr chip::System::Clock::Milliseconds32 kFabricEvictionRetryDelay = chip::System::Clock::Milliseconds32(30000);
-
-bool gEp0AclSubscriptionActive      = false;
-uint8_t gEp0AclSubscriptionRefCount = 0;
-bool gEp0AclKeepAliveArmed          = false;
-
-#ifdef CONFIG_PM
-bool gEp0AclPmLockActive = false;
-#endif
-
-chip::Optional<chip::FabricIndex> gPendingFabricEviction;
+// Guard to prevent duplicate registration / init across reboots
+static bool sOneTimeMatterInitDone = false;
+static bool sFactoryResetScheduled  = false;
 
 chip::Credentials::GroupDataProviderImpl gGroupDataProvider;
 
-using chip::Optional;
-
-static void PreventDeepSleepForEp0Subscription();
-static void AllowDeepSleepForEp0Subscription();
-static void StartEp0AclKeepAliveTimer();
-static void StopEp0AclKeepAliveTimer();
-static void Ep0AclKeepAliveTimer(chip::System::Layer * layer, void * context);
-static void OnEp0AclSubscriptionAdded();
-static void OnEp0AclSubscriptionRemoved();
-static bool IsEp0AclSubscription(chip::app::ReadHandler & handler);
-static void EnsureCaseAdminEntryWork(intptr_t context);
-static void ScheduleEnsureCaseAdminEntry(chip::FabricIndex fabricIndex);
-static void ScheduleFabricEviction(chip::FabricIndex victim,
-                                   chip::System::Clock::Milliseconds32 delay = kFabricEvictionDelay);
-static void FabricEvictionTimerHandler(chip::System::Layer * layer, void * context);
-static void FabricEvictionWork(intptr_t context);
-static void InitEventLogging();
-static void EnsureAccessControlReady();
-static void AssertRootAccessControlReady();
-static void NotifyAclChanged();
-
-class Ep0AclSubscriptionCallback final : public chip::app::ReadHandler::ApplicationCallback
-{
-public:
-    CHIP_ERROR OnSubscriptionRequested(chip::app::ReadHandler & handler,
-                                       chip::Transport::SecureSession & session) override
-    {
-        (void) session;
-        if (IsEp0AclSubscription(handler))
-        {
-            constexpr uint16_t kEp0AclMaxIntervalSeconds = 30;
-            CHIP_ERROR intervalErr                        = handler.SetMaxReportingInterval(kEp0AclMaxIntervalSeconds);
-            if (intervalErr != CHIP_NO_ERROR)
-            {
-                ChipLogProgress(AppServer, "ACL max interval err: %s", chip::ErrorStr(intervalErr));
-            }
-
-            intervalErr = handler.SetMinReportingIntervalForTests(0);
-            if (intervalErr != CHIP_NO_ERROR)
-            {
-                ChipLogProgress(AppServer, "ACL min interval err: %s", chip::ErrorStr(intervalErr));
-            }
-        }
-        return CHIP_NO_ERROR;
-    }
-
-    void OnSubscriptionEstablished(chip::app::ReadHandler & handler) override
-    {
-        if (IsEp0AclSubscription(handler))
-        {
-            OnEp0AclSubscriptionAdded();
-        }
-    }
-
-    void OnSubscriptionTerminated(chip::app::ReadHandler & handler) override
-    {
-        if (IsEp0AclSubscription(handler))
-        {
-            OnEp0AclSubscriptionRemoved();
-        }
-    }
-};
-
-Ep0AclSubscriptionCallback gEp0AclSubscriptionCallback;
-
-static size_t GetFabricCapacity(const chip::FabricTable &)
-{
-#if defined(CHIP_DEVICE_CONFIG_MAX_FABRICS)
-    return CHIP_DEVICE_CONFIG_MAX_FABRICS;
-#elif defined(CONFIG_CHIP_MAX_FABRICS)
-    return CONFIG_CHIP_MAX_FABRICS;
-#elif defined(CHIP_CONFIG_MAX_FABRICS)
-    return CHIP_CONFIG_MAX_FABRICS;
-#else
-    return 5;
-#endif
-}
-
-struct SessionCountContext
-{
-    FabricIndex fabric;
-    size_t count;
-};
-
-static size_t CountCaseSessionsForFabric(FabricIndex fabricIndex)
-{
-    SessionCountContext context{ fabricIndex, 0 };
-    auto & sessionManager = Server::GetInstance().GetSecureSessionManager();
-
-    (void) sessionManager.ForEachSessionHandle(&context, [](void * ctx, chip::SessionHandle & handle) -> bool {
-        auto * countCtx = static_cast<SessionCountContext *>(ctx);
-        auto * secure   = handle->AsSecureSession();
-        if ((secure != nullptr) && secure->IsCASESession() && (secure->GetFabricIndex() == countCtx->fabric))
-        {
-            countCtx->count++;
-        }
-        return true;
-    });
-
-    return context.count;
-}
-
-static bool HasActiveCaseSessionOnFabric(FabricIndex fabricIndex)
-{
-    return CountCaseSessionsForFabric(fabricIndex) > 0;
-}
-
-static void InitEventLogging()
-{
-    auto & eventManagement = chip::app::EventManagement::GetInstance();
-    (void) eventManagement;
-}
-
-static void NotifyAclChanged()
-{
-    using namespace chip::app;
-    namespace AccessControlCluster = chip::app::Clusters::AccessControl;
-
-    auto * engine = InteractionModelEngine::GetInstance();
-    if (engine == nullptr)
-    {
-        return;
-    }
-
-    AttributePathParams paths[] = {
-        AttributePathParams(0, AccessControlCluster::Id, AccessControlCluster::Attributes::Acl::Id),
-        AttributePathParams(0, AccessControlCluster::Id,
-                            AccessControlCluster::Attributes::AccessControlEntriesPerFabric::Id),
-        AttributePathParams(0, AccessControlCluster::Id,
-                            AccessControlCluster::Attributes::SubjectsPerAccessControlEntry::Id),
-        AttributePathParams(0, AccessControlCluster::Id,
-                            AccessControlCluster::Attributes::TargetsPerAccessControlEntry::Id),
-    };
-
-    for (auto & path : paths)
-    {
-        (void) engine->GetReportingEngine().SetDirty(path);
-    }
-}
-
-static void EnsureAccessControlReady()
-{
-    size_t entryCount = 0;
-    CHIP_ERROR err     = chip::Access::GetAccessControl().GetEntryCount(entryCount);
-    VerifyOrDie(err == CHIP_NO_ERROR);
-}
-
-static void AssertRootAccessControlReady()
-{
-    VerifyOrDie(emberAfContainsServer(0, chip::app::Clusters::AccessControl::Id));
-    NotifyAclChanged();
-}
-
-static void PreventDeepSleepForEp0Subscription()
-{
-#ifdef CONFIG_PM
-#if defined(PM_STATE_STANDBY)
-    constexpr pm_state_t kSleepState = PM_STATE_STANDBY;
-#elif defined(PM_STATE_RUNTIME_IDLE)
-    constexpr pm_state_t kSleepState = PM_STATE_RUNTIME_IDLE;
-#else
-    constexpr pm_state_t kSleepState = PM_STATE_SOFT_OFF;
-#endif
-#ifdef PM_ALL_SUBSTATES
-    constexpr uint8_t kSubstate = PM_ALL_SUBSTATES;
-#else
-    constexpr uint8_t kSubstate = 0;
-#endif
-
-    if (!gEp0AclPmLockActive)
-    {
-        int rc = pm_policy_state_lock_get(kSleepState, kSubstate);
-        if (rc == 0)
-        {
-            gEp0AclPmLockActive = true;
-        }
-        else
-        {
-            LOG_WRN("Failed to acquire PM policy lock (%d)", rc);
-        }
-    }
-#endif
-}
-
-static void AllowDeepSleepForEp0Subscription()
-{
-#ifdef CONFIG_PM
-#if defined(PM_STATE_STANDBY)
-    constexpr pm_state_t kSleepState = PM_STATE_STANDBY;
-#elif defined(PM_STATE_RUNTIME_IDLE)
-    constexpr pm_state_t kSleepState = PM_STATE_RUNTIME_IDLE;
-#else
-    constexpr pm_state_t kSleepState = PM_STATE_SOFT_OFF;
-#endif
-#ifdef PM_ALL_SUBSTATES
-    constexpr uint8_t kSubstate = PM_ALL_SUBSTATES;
-#else
-    constexpr uint8_t kSubstate = 0;
-#endif
-
-    if (gEp0AclPmLockActive)
-    {
-        pm_policy_state_lock_put(kSleepState, kSubstate);
-        gEp0AclPmLockActive = false;
-    }
-#endif
-}
-
-static void Ep0AclKeepAliveTimer(chip::System::Layer * layer, void * context)
-{
-    (void) context;
-
-    if (!gEp0AclSubscriptionActive)
-    {
-        gEp0AclKeepAliveArmed = false;
-        return;
-    }
-
-    // Keep rescheduling to prevent deep sleep; no payload is required.
-    CHIP_ERROR err = layer->StartTimer(kEp0AclKeepAliveInterval, Ep0AclKeepAliveTimer, nullptr);
-    if (err != CHIP_NO_ERROR)
-    {
-        gEp0AclKeepAliveArmed = false;
-        ChipLogError(AppServer, "Failed to re-arm ACL keep-alive timer: %s", chip::ErrorStr(err));
-    }
-}
-
-static void StartEp0AclKeepAliveTimer()
-{
-    if (gEp0AclKeepAliveArmed)
-    {
-        return;
-    }
-
-    CHIP_ERROR err = chip::DeviceLayer::SystemLayer().StartTimer(kEp0AclKeepAliveInterval, Ep0AclKeepAliveTimer, nullptr);
-    if (err == CHIP_NO_ERROR)
-    {
-        gEp0AclKeepAliveArmed = true;
-    }
-    else
-    {
-        ChipLogError(AppServer, "Failed to arm ACL keep-alive timer: %s", chip::ErrorStr(err));
-    }
-}
-
-static void StopEp0AclKeepAliveTimer()
-{
-    if (!gEp0AclKeepAliveArmed)
-    {
-        return;
-    }
-
-    (void) chip::DeviceLayer::SystemLayer().CancelTimer(Ep0AclKeepAliveTimer, nullptr);
-    gEp0AclKeepAliveArmed = false;
-}
-
-static void OnEp0AclSubscriptionAdded()
-{
-    if (gEp0AclSubscriptionRefCount == UINT8_MAX)
-    {
-        return;
-    }
-
-    gEp0AclSubscriptionRefCount++;
-    if (gEp0AclSubscriptionActive)
-    {
-        return;
-    }
-
-    gEp0AclSubscriptionActive = true;
-    PreventDeepSleepForEp0Subscription();
-    StartEp0AclKeepAliveTimer();
-}
-
-static void OnEp0AclSubscriptionRemoved()
-{
-    if (gEp0AclSubscriptionRefCount == 0)
-    {
-        return;
-    }
-
-    gEp0AclSubscriptionRefCount--;
-    if (gEp0AclSubscriptionRefCount > 0)
-    {
-        return;
-    }
-
-    gEp0AclSubscriptionActive = false;
-    StopEp0AclKeepAliveTimer();
-    AllowDeepSleepForEp0Subscription();
-}
-
-static bool IsEp0AclSubscription(chip::app::ReadHandler & handler)
-{
-    const chip::SingleLinkedListNode<chip::app::AttributePathParams> * pathNode = handler.GetAttributePathList();
-    if (pathNode == nullptr)
-    {
-        return false;
-    }
-
-    for (auto current = pathNode; current != nullptr; current = current->mpNext)
-    {
-        const auto & path = current->mValue;
-        if (path.HasWildcardClusterId())
-        {
-            continue;
-        }
-
-        if (path.mClusterId != chip::app::Clusters::AccessControl::Id)
-        {
-            continue;
-        }
-
-        if (!path.HasWildcardEndpointId() && (path.mEndpointId != chip::EndpointId{ 0 }))
-        {
-            continue;
-        }
-
-        return true;
-    }
-
-    return false;
-}
-
-static CHIP_ERROR CloseCaseSessionsForFabric(FabricIndex fabricIndex)
-{
-    Server::GetInstance().GetSecureSessionManager().ExpireAllSessionsForFabric(fabricIndex);
-    return CHIP_NO_ERROR;
-}
-
-static bool HasActiveSubscriptionOnFabric(FabricIndex fabricIndex)
-{
-    auto * im = chip::app::InteractionModelEngine::GetInstance();
-    return (im != nullptr) && im->FabricHasAtLeastOneActiveSubscription(fabricIndex);
-}
-
-static Optional<FabricIndex> PickEvictionCandidate(const chip::FabricTable & table, Optional<FabricIndex> protectedFabric)
-{
-    for (auto it = table.cbegin(); it != table.cend(); ++it)
-    {
-        const chip::FabricInfo & info = *it;
-        if (!info.IsInitialized())
-        {
-            continue;
-        }
-
-        FabricIndex candidate = info.GetFabricIndex();
-        if (protectedFabric.HasValue() && (candidate == protectedFabric.Value()))
-        {
-            continue;
-        }
-
-        if (!HasActiveCaseSessionOnFabric(candidate) && !HasActiveSubscriptionOnFabric(candidate))
-        {
-            return chip::MakeOptional(candidate);
-        }
-    }
-
-    FabricIndex fallback            = chip::kUndefinedFabricIndex;
-    size_t lowestSessionCount       = SIZE_MAX;
-
-    for (auto it = table.cbegin(); it != table.cend(); ++it)
-    {
-        const chip::FabricInfo & info = *it;
-        if (!info.IsInitialized())
-        {
-            continue;
-        }
-
-        FabricIndex candidate = info.GetFabricIndex();
-        if (protectedFabric.HasValue() && (candidate == protectedFabric.Value()))
-        {
-            continue;
-        }
-
-        if (HasActiveCaseSessionOnFabric(candidate))
-        {
-            continue;
-        }
-
-        size_t sessionCount = 0;
-        if (HasActiveSubscriptionOnFabric(candidate))
-        {
-            continue;
-        }
-        if (sessionCount < lowestSessionCount)
-        {
-            lowestSessionCount = sessionCount;
-            fallback           = candidate;
-        }
-    }
-
-    if (fallback != chip::kUndefinedFabricIndex)
-    {
-        return chip::MakeOptional(fallback);
-    }
-
-    return Optional<FabricIndex>();
-}
-
-static CHIP_ERROR EnsureFreeFabricSlot(Optional<FabricIndex> protectedFabric)
-{
-    auto & fabricTable = Server::GetInstance().GetFabricTable();
-
-    const size_t capacity    = GetFabricCapacity(fabricTable);
-    const size_t fabricCount = fabricTable.FabricCount();
-
-    if ((capacity == 0) || (fabricCount < capacity))
-    {
-        return CHIP_NO_ERROR;
-    }
-
-    ChipLogProgress(AppServer, "Fabric guard: %u/%u slots", static_cast<unsigned>(fabricCount),
-                    static_cast<unsigned>(capacity));
-
-    if (gEp0AclSubscriptionActive)
-    {
-        return CHIP_ERROR_NO_MEMORY;
-    }
-
-    Optional<FabricIndex> victim = PickEvictionCandidate(fabricTable, protectedFabric);
-    VerifyOrReturnError(victim.HasValue(), CHIP_ERROR_NO_MEMORY);
-
-    if (gPendingFabricEviction.HasValue() && (gPendingFabricEviction.Value() == victim.Value()))
-    {
-        return CHIP_NO_ERROR;
-    }
-
-    if (gPendingFabricEviction.HasValue() && (gPendingFabricEviction.Value() != victim.Value()))
-    {
-        (void) chip::DeviceLayer::SystemLayer().CancelTimer(FabricEvictionTimerHandler,
-                                                            reinterpret_cast<void *>(static_cast<uintptr_t>(gPendingFabricEviction.Value())));
-    }
-
-    gPendingFabricEviction.SetValue(victim.Value());
-    ScheduleFabricEviction(victim.Value());
-
-    return CHIP_NO_ERROR;
-}
-
-static void ScheduleFabricEviction(chip::FabricIndex victim, chip::System::Clock::Milliseconds32 delay)
-{
-    if (victim == chip::kUndefinedFabricIndex)
-    {
-        return;
-    }
-
-    (void) chip::DeviceLayer::SystemLayer().CancelTimer(FabricEvictionTimerHandler,
-                                                        reinterpret_cast<void *>(static_cast<uintptr_t>(victim)));
-
-    CHIP_ERROR err = chip::DeviceLayer::SystemLayer().StartTimer(delay, FabricEvictionTimerHandler,
-                                                                reinterpret_cast<void *>(static_cast<uintptr_t>(victim)));
-    if (err != CHIP_NO_ERROR)
-    {
-        ChipLogError(AppServer, "Fabric guard: schedule timer fail (0x%02x): %s", victim, chip::ErrorStr(err));
-        gPendingFabricEviction.ClearValue();
-        return;
-    }
-
-}
-
-static void FabricEvictionTimerHandler(chip::System::Layer * layer, void * context)
-{
-    (void) layer;
-    auto victim = static_cast<chip::FabricIndex>(reinterpret_cast<uintptr_t>(context));
-    chip::DeviceLayer::PlatformMgr().ScheduleWork(FabricEvictionWork, static_cast<intptr_t>(victim));
-}
-
-static void FabricEvictionWork(intptr_t context)
-{
-    chip::FabricIndex victim = static_cast<chip::FabricIndex>(context);
-
-    if (!gPendingFabricEviction.HasValue() || (gPendingFabricEviction.Value() != victim))
-    {
-        return;
-    }
-
-    if (gEp0AclSubscriptionActive)
-    {
-        ScheduleFabricEviction(victim, kFabricEvictionRetryDelay);
-        return;
-    }
-
-    if (HasActiveCaseSessionOnFabric(victim) || HasActiveSubscriptionOnFabric(victim))
-    {
-        ScheduleFabricEviction(victim, kFabricEvictionRetryDelay);
-        return;
-    }
-
-    (void) CloseCaseSessionsForFabric(victim);
-
-    CHIP_ERROR err = Server::GetInstance().GetFabricTable().Delete(victim);
-    if (err != CHIP_NO_ERROR)
-    {
-        ChipLogError(AppServer, "Fabric guard: delete fail (0x%02x): %s", victim, chip::ErrorStr(err));
-        ScheduleFabricEviction(victim, kFabricEvictionRetryDelay);
-        return;
-    }
-
-    NotifyAclChanged();
-    gPendingFabricEviction.ClearValue();
-}
-
-static void ScheduleEnsureCaseAdminEntry(chip::FabricIndex fabricIndex)
-{
-    if (fabricIndex == chip::kUndefinedFabricIndex)
-    {
-        return;
-    }
-
-    chip::DeviceLayer::PlatformMgr().ScheduleWork(EnsureCaseAdminEntryWork, static_cast<intptr_t>(fabricIndex));
-}
-
-static void EnsureCaseAdminEntryWork(intptr_t context)
-{
-    chip::FabricIndex fabricIndex = static_cast<chip::FabricIndex>(context);
-    if (fabricIndex == chip::kUndefinedFabricIndex)
-    {
-        return;
-    }
-
-    auto & accessControl = chip::Access::GetAccessControl();
-
-    size_t entryCount = 0;
-    CHIP_ERROR err    = accessControl.GetEntryCount(fabricIndex, entryCount);
-    if (err != CHIP_NO_ERROR)
-    {
-        ChipLogError(AppServer, "ACL bootstrap err f=0x%02x: %s", fabricIndex, chip::ErrorStr(err));
-        return;
-    }
-
-    if (entryCount > 0)
-    {
-        NotifyAclChanged();
-        return;
-    }
-
-    chip::Access::AccessControl::Entry newEntry;
-    err = accessControl.PrepareEntry(newEntry);
-    if (err != CHIP_NO_ERROR)
-    {
-        ChipLogError(AppServer, "ACL bootstrap err f=0x%02x: %s", fabricIndex, chip::ErrorStr(err));
-        return;
-    }
-
-    err = newEntry.SetFabricIndex(fabricIndex);
-    if (err != CHIP_NO_ERROR)
-    {
-        ChipLogError(AppServer, "ACL bootstrap err f=0x%02x: %s", fabricIndex, chip::ErrorStr(err));
-        return;
-    }
-
-    err = newEntry.SetPrivilege(chip::Access::Privilege::kAdminister);
-    if (err != CHIP_NO_ERROR)
-    {
-        ChipLogError(AppServer, "ACL bootstrap err f=0x%02x: %s", fabricIndex, chip::ErrorStr(err));
-        return;
-    }
-
-    err = newEntry.SetAuthMode(chip::Access::AuthMode::kCase);
-    if (err != CHIP_NO_ERROR)
-    {
-        ChipLogError(AppServer, "ACL bootstrap err f=0x%02x: %s", fabricIndex, chip::ErrorStr(err));
-        return;
-    }
-
-    err = newEntry.AddSubject(nullptr, kCaseAdminSubjectId);
-    if (err != CHIP_NO_ERROR)
-    {
-        ChipLogError(AppServer, "ACL bootstrap err f=0x%02x: %s", fabricIndex, chip::ErrorStr(err));
-        return;
-    }
-
-    size_t newIndex = 0;
-    err             = accessControl.CreateEntry(nullptr, fabricIndex, &newIndex, newEntry);
-    if (err != CHIP_NO_ERROR)
-    {
-        if (err != CHIP_ERROR_INCORRECT_STATE)
-        {
-            ChipLogError(AppServer, "ACL bootstrap err f=0x%02x: %s", fabricIndex, chip::ErrorStr(err));
-        }
-        return;
-    }
-
-    NotifyAclChanged();
-}
+static size_t MatterMaxFabrics();
+static bool EnsureFabricSlot();
+static void FactoryResetEventHandler(const chip::DeviceLayer::ChipDeviceEvent * event, intptr_t arg);
+static void DoFactoryResetLikeNordic();
+static void FullCommissioningCleanup();
 
 class AccessControlLimitsAttrAccess : public chip::app::AttributeAccessInterface
 {
@@ -719,9 +140,9 @@ public:
 
         auto & ac = chip::Access::GetAccessControl();
 
-        size_t entriesPerFabric  = CONFIG_CHIP_ACL_MAX_ENTRIES_PER_FABRIC;
-        size_t subjectsPerEntry   = CONFIG_CHIP_ACL_MAX_SUBJECTS_PER_ENTRY;
-        size_t targetsPerEntry    = CONFIG_CHIP_ACL_MAX_TARGETS_PER_ENTRY;
+        size_t entriesPerFabric = CONFIG_CHIP_ACL_MAX_ENTRIES_PER_FABRIC;
+        size_t subjectsPerEntry = CONFIG_CHIP_ACL_MAX_SUBJECTS_PER_ENTRY;
+        size_t targetsPerEntry  = CONFIG_CHIP_ACL_MAX_TARGETS_PER_ENTRY;
 
         (void) ac.GetMaxEntriesPerFabric(entriesPerFabric);
         (void) ac.GetMaxSubjectsPerEntry(subjectsPerEntry);
@@ -747,35 +168,16 @@ public:
 };
 
 AccessControlLimitsAttrAccess gAclLimitsAttrAccess;
-bool gRegisteredIMHooks = false;
-bool gFabricDelegateRegistered = false;
 
-void RegisterIMHooksOnce()
+static bool gPluginsInitialized = false;
+
+static void InitEventLogging()
 {
-    if (gRegisteredIMHooks)
-    {
-        return;
-    }
-
-    chip::app::AttributeAccessInterfaceRegistry::Instance().Register(&gAclLimitsAttrAccess);
-    chip::app::InteractionModelEngine::GetInstance()->RegisterReadHandlerAppCallback(&gEp0AclSubscriptionCallback);
-
-    gRegisteredIMHooks = true;
+    auto & eventManagement = chip::app::EventManagement::GetInstance();
+    (void) eventManagement;
 }
 
-class CaseAdminAclFabricDelegate final : public chip::FabricTable::Delegate
-{
-public:
-    void OnFabricCommitted(const chip::FabricTable & fabricTable, chip::FabricIndex fabricIndex) override
-    {
-        (void) fabricTable;
-        ScheduleEnsureCaseAdminEntry(fabricIndex);
-    }
-};
-
-CaseAdminAclFabricDelegate gCaseAdminAclFabricDelegate;
-
-CHIP_ERROR InitManagementClusters()
+static CHIP_ERROR InitManagementClusters()
 {
     auto & server = chip::Server::GetInstance();
 
@@ -785,62 +187,13 @@ CHIP_ERROR InitManagementClusters()
     CHIP_ERROR err = gGroupDataProvider.Init();
     if (err != CHIP_NO_ERROR)
     {
-        ChipLogError(AppServer, "GroupDataProvider init failed: %" CHIP_ERROR_FORMAT, err.Format());
+        ChipLogError(AppServer, "GroupDataProvider init failed: %s", chip::ErrorStr(err));
         return err;
     }
 
     chip::Credentials::SetGroupDataProvider(&gGroupDataProvider);
-
     return CHIP_NO_ERROR;
 }
-
-class CommissioningCapacityDelegate final : public AppDelegate
-{
-public:
-    void OnCommissioningWindowOpened() override
-    {
-        Optional<FabricIndex> protectedFabric;
-        const auto openerFabric = Server::GetInstance().GetCommissioningWindowManager().GetOpenerFabricIndex();
-        if (!openerFabric.IsNull())
-        {
-            protectedFabric.SetValue(openerFabric.Value());
-        }
-
-        CHIP_ERROR err = EnsureFreeFabricSlot(protectedFabric);
-        if (err == CHIP_ERROR_NO_MEMORY)
-        {
-            ChipLogProgress(AppServer, "Fabric guard: no free slot");
-        }
-        else if (err != CHIP_NO_ERROR)
-        {
-            ChipLogError(AppServer, "Fabric guard: ensure failed: %" CHIP_ERROR_FORMAT, err.Format());
-        }
-    }
-
-    void OnCommissioningSessionEstablishmentStarted() override
-    {
-        Optional<FabricIndex> protectedFabric;
-        const auto openerFabric = Server::GetInstance().GetCommissioningWindowManager().GetOpenerFabricIndex();
-        if (!openerFabric.IsNull())
-        {
-            protectedFabric.SetValue(openerFabric.Value());
-        }
-
-        CHIP_ERROR err = EnsureFreeFabricSlot(protectedFabric);
-        if (err == CHIP_ERROR_NO_MEMORY)
-        {
-            ChipLogProgress(AppServer, "Fabric guard: full, no eviction");
-        }
-        else if (err != CHIP_NO_ERROR)
-        {
-            ChipLogError(AppServer, "Fabric guard: ensure failed: %" CHIP_ERROR_FORMAT, err.Format());
-        }
-    }
-};
-
-CommissioningCapacityDelegate gCommissioningCapacityDelegate;
-
-static bool gPluginsInitialized = false;
 
 static void InitializeGeneratedPluginsOnce()
 {
@@ -853,7 +206,227 @@ static void InitializeGeneratedPluginsOnce()
     gPluginsInitialized = true;
 }
 
+static bool IsBenignNotFound(CHIP_ERROR err)
+{
+    return (err == CHIP_NO_ERROR) || (err == CHIP_ERROR_NOT_FOUND) || (err == CHIP_ERROR_PERSISTED_STORAGE_VALUE_NOT_FOUND) ||
+        (err == CHIP_ERROR_KEY_NOT_FOUND);
+}
+
+static size_t MatterMaxFabrics()
+{
+#if defined(CHIP_DEVICE_CONFIG_MAX_FABRICS)
+    return CHIP_DEVICE_CONFIG_MAX_FABRICS;
+#elif defined(CONFIG_CHIP_MAX_FABRICS)
+    return CONFIG_CHIP_MAX_FABRICS;
+#elif defined(CHIP_CONFIG_MAX_FABRICS)
+    return CHIP_CONFIG_MAX_FABRICS;
+#else
+    return 5;
+#endif
+}
+
+struct FabricSessionCheckContext
+{
+    FabricIndex fabric;
+    bool hasActive;
+};
+
+static bool SessionIteratorForFabric(void * context, chip::SessionHandle & handle)
+{
+    auto * data = static_cast<FabricSessionCheckContext *>(context);
+    if (handle->IsActiveSession() && handle->GetFabricIndex() == data->fabric)
+    {
+        data->hasActive = true;
+        return false;
+    }
+    return true;
+}
+
+static bool FabricHasActiveSessions(FabricIndex fabricIndex)
+{
+    FabricSessionCheckContext ctx{ fabricIndex, false };
+    (void) chip::Server::GetInstance().GetSecureSessionManager().ForEachSessionHandle(&ctx, SessionIteratorForFabric);
+    return ctx.hasActive;
+}
+
+static bool FabricHasActiveSubscription(FabricIndex fabricIndex)
+{
+    auto * imEngine = chip::app::InteractionModelEngine::GetInstance();
+    return (imEngine != nullptr) && imEngine->FabricHasAtLeastOneActiveSubscription(fabricIndex);
+}
+
+static bool TryEvictIdleFabric()
+{
+    auto & server      = chip::Server::GetInstance();
+    auto & fabricTable = server.GetFabricTable();
+
+    for (auto it = fabricTable.begin(); it != fabricTable.end(); ++it)
+    {
+        const chip::FabricInfo & info = *it;
+        if (!info.IsInitialized())
+        {
+            continue;
+        }
+
+        FabricIndex candidate = info.GetFabricIndex();
+        if (FabricHasActiveSessions(candidate) || FabricHasActiveSubscription(candidate))
+        {
+            continue;
+        }
+
+        server.GetSecureSessionManager().ExpireAllSessionsForFabric(candidate);
+        if (auto * resumption = server.GetSessionResumptionStorage(); resumption != nullptr)
+        {
+            (void) resumption->DeleteAll(candidate);
+        }
+        if (auto * groups = server.GetGroupDataProvider(); groups != nullptr)
+        {
+            (void) groups->RemoveFabric(candidate);
+        }
+
+        CHIP_ERROR err = fabricTable.Delete(candidate);
+        if (err != CHIP_NO_ERROR && err != CHIP_ERROR_NOT_FOUND)
+        {
+            ChipLogError(AppServer, "Failed to evict fabric 0x%02x: %s", candidate, chip::ErrorStr(err));
+            return false;
+        }
+
+        ChipLogProgress(AppServer, "Evicted idle fabric 0x%02x to free a slot", candidate);
+        return true;
+    }
+
+    return false;
+}
+
+static bool EnsureFabricSlot()
+{
+    auto & server      = chip::Server::GetInstance();
+    auto & fabricTable = server.GetFabricTable();
+
+    if (fabricTable.FabricCount() < MatterMaxFabrics())
+    {
+        return true;
+    }
+
+    bool evicted = TryEvictIdleFabric();
+    if (!evicted)
+    {
+        ChipLogProgress(AppServer, "No fabric slots available and no idle fabric to evict");
+    }
+    return evicted;
+}
+
+class CommissioningCapacityDelegate final : public ::AppDelegate
+{
+public:
+    void OnCommissioningWindowOpened() override { (void) EnsureFabricSlot(); }
+    void OnCommissioningSessionEstablishmentStarted() override { (void) EnsureFabricSlot(); }
+};
+
+CommissioningCapacityDelegate gCommissioningCapacityDelegate;
+
+static void FullCommissioningCleanup()
+{
+    using namespace chip;
+    using namespace chip::DeviceLayer;
+
+    Server & server = Server::GetInstance();
+
+    server.GetFailSafeContext().ForceFailSafeTimerExpiry();
+    server.GetCommissioningWindowManager().CloseCommissioningWindow();
+
+    if (auto * caseManager = server.GetCASESessionManager(); caseManager != nullptr)
+    {
+        caseManager->ReleaseAllSessions();
+    }
+
+    server.GetSecureSessionManager().ExpireAllSecureSessions();
+
+    std::vector<FabricIndex> fabricsToDelete;
+    fabricsToDelete.reserve(MatterMaxFabrics());
+
+    auto & fabricTable = server.GetFabricTable();
+    for (auto it = fabricTable.begin(); it != fabricTable.end(); ++it)
+    {
+        const FabricInfo & info = *it;
+        if (info.IsInitialized())
+        {
+            fabricsToDelete.push_back(info.GetFabricIndex());
+        }
+    }
+
+    auto * resumption    = server.GetSessionResumptionStorage();
+    auto * groupProvider = server.GetGroupDataProvider();
+
+    for (FabricIndex fabricIndex : fabricsToDelete)
+    {
+        server.GetSecureSessionManager().ExpireAllSessionsForFabric(fabricIndex);
+
+        if (auto * caseManager = server.GetCASESessionManager(); caseManager != nullptr)
+        {
+            caseManager->ReleaseSessionsForFabric(fabricIndex);
+        }
+
+        if (resumption != nullptr)
+        {
+            CHIP_ERROR err = resumption->DeleteAll(fabricIndex);
+            if (!IsBenignNotFound(err) && err != CHIP_ERROR_NOT_IMPLEMENTED)
+            {
+                ChipLogProgress(AppServer, "Failed to clear resumption cache for fabric 0x%02x: %s", fabricIndex,
+                                chip::ErrorStr(err));
+            }
+        }
+
+        if (groupProvider != nullptr)
+        {
+            CHIP_ERROR err = groupProvider->RemoveFabric(fabricIndex);
+            if (!IsBenignNotFound(err) && err != CHIP_ERROR_NOT_IMPLEMENTED)
+            {
+                ChipLogProgress(AppServer, "Failed to remove group data for fabric 0x%02x: %s", fabricIndex,
+                                chip::ErrorStr(err));
+            }
+        }
+
+        CHIP_ERROR fabricErr = fabricTable.Delete(fabricIndex);
+        if (fabricErr != CHIP_NO_ERROR && fabricErr != CHIP_ERROR_NOT_FOUND)
+        {
+            ChipLogProgress(AppServer, "Fabric delete failed for index 0x%02x: %s", fabricIndex, chip::ErrorStr(fabricErr));
+        }
+
+        (void) Access::GetAccessControl().DeleteAllEntriesForFabric(fabricIndex);
+    }
+
+    Access::ResetAccessControlToDefault();
+
+    ChipLogProgress(AppServer, "KeyValueStore clear delegated to platform factory reset");
+
+    ChipLogProgress(AppServer, "FullCommissioningCleanup done.");
+}
+
+static void DoFactoryResetLikeNordic()
+{
+    if (sFactoryResetScheduled)
+    {
+        return;
+    }
+
+    sFactoryResetScheduled = true;
+    FullCommissioningCleanup();
+    chip::DeviceLayer::ConfigurationMgr().InitiateFactoryReset();
+}
+
+static void FactoryResetEventHandler(const chip::DeviceLayer::ChipDeviceEvent * event, intptr_t)
+{
+    if ((event == nullptr) || (event->Type != chip::DeviceLayer::DeviceEventType::kFactoryReset))
+    {
+        return;
+    }
+
+    DoFactoryResetLikeNordic();
+}
+
 } // namespace
+
 
 #if defined(CONFIG_CHIP_WIFI)
 // Register Network Commissioning cluster (Wi‑Fi) on endpoint 0 using nRF Wi‑Fi driver
@@ -969,8 +542,16 @@ extern "C" int main(void)
     }
     DeviceLayer::SetDeviceInfoProvider(&gExampleDeviceInfoProvider);
 
-    // Register a handler for BLE-related and other platform events
+    // Register handlers for factory reset prep and BLE-related platform events
+    PlatformMgr().AddEventHandler(FactoryResetEventHandler, 0);
     PlatformMgr().AddEventHandler(AppEventHandler, 0);
+
+    CHIP_ERROR appTaskErr = AppTask::Instance().StartApp();
+    if (appTaskErr != CHIP_NO_ERROR)
+    {
+        LOG_ERR("AppTask start failed: %s (%" CHIP_ERROR_FORMAT ")", chip::ErrorStr(appTaskErr), appTaskErr.Format());
+        return 0;
+    }
 
     // Load Zephyr settings now that CHIP stack (and BT) are initialized.
     if (IS_ENABLED(CONFIG_BT_SETTINGS)) {
@@ -1003,16 +584,22 @@ extern "C" int main(void)
     initParams.dataModelProvider = chip::app::CodegenDataModelProviderInstance(initParams.persistentStorageDelegate);
     initParams.appDelegate       = &gCommissioningCapacityDelegate;
 
-    err = chip::Server::GetInstance().Init(initParams);
+    chip::Server & server = chip::Server::GetInstance();
+
+    if (!sOneTimeMatterInitDone)
+    {
+        if (!chip::app::AttributeAccessInterfaceRegistry::Instance().Register(&gAclLimitsAttrAccess))
+        {
+            LOG_WRN("ACL limits attribute was already registered");
+        }
+        sOneTimeMatterInitDone = true;
+    }
+
+    err = server.Init(initParams);
 
     if (err != CHIP_NO_ERROR) { LOG_ERR("Matter Server init failed: %ld", (long)err.AsInteger()); return -2; }
 
     InitEventLogging();
-    EnsureAccessControlReady();
-    AssertRootAccessControlReady();
-
-    RegisterIMHooksOnce();
-    NotifyAclChanged();
 
 #if CHIP_DEVICE_CONFIG_ENABLE_DYNAMIC_MRP_CONFIG
     {
@@ -1026,50 +613,31 @@ extern "C" int main(void)
     CHIP_ERROR managementErr = InitManagementClusters();
     if (managementErr != CHIP_NO_ERROR)
     {
-        ChipLogError(AppServer, "Management cluster init failed: %" CHIP_ERROR_FORMAT, managementErr.Format());
+        ChipLogError(AppServer, "Management cluster init failed: %s", chip::ErrorStr(managementErr));
     }
 
     InitializeGeneratedPluginsOnce();
 
-    (void) chip::System::SystemClock().SetClock_RealTime(chip::System::SystemClock().GetMonotonicMicroseconds64());
-
-
-    // --- ACL init & commissioning window hygiene ---
+    if (server.GetFabricTable().FabricCount() == 0)
     {
-        auto & server = chip::Server::GetInstance();
-
-        (void) chip::Access::GetAccessControl();
-
-        if (!gFabricDelegateRegistered)
+        if (!EnsureFabricSlot())
         {
-            CHIP_ERROR delegateErr = server.GetFabricTable().AddFabricDelegate(&gCaseAdminAclFabricDelegate);
-            if (delegateErr != CHIP_NO_ERROR)
-            {
-                ChipLogError(AppServer, "Failed to register fabric ACL delegate: %s", chip::ErrorStr(delegateErr));
-            }
-            else
-            {
-                gFabricDelegateRegistered = true;
-            }
+            LOG_WRN("Unable to free fabric slot before commissioning window");
         }
-
-        for (auto it = server.GetFabricTable().cbegin(); it != server.GetFabricTable().cend(); ++it)
+        else
         {
-            const chip::FabricInfo & info = *it;
-            if (!info.IsInitialized())
+            constexpr auto kDefaultCommissioningTimeout = chip::System::Clock::Seconds32(15 * 60);
+            CHIP_ERROR windowErr =
+                server.GetCommissioningWindowManager().OpenBasicCommissioningWindow(kDefaultCommissioningTimeout);
+            if (windowErr != CHIP_NO_ERROR)
             {
-                continue;
+                LOG_WRN("OpenBasicCommissioningWindow failed: %s", chip::ErrorStr(windowErr));
             }
-            ScheduleEnsureCaseAdminEntry(info.GetFabricIndex());
-        }
-
-        // Only close an *existing* window on already-commissioned devices.
-        // For first-boot (no fabrics), keep the default window open for PASE.
-        if (server.GetFabricTable().FabricCount() > 0) {
-            // Keep default commissioning window state; do not force-close here.
         }
     }
-    // --- end ACL init ---
+
+    (void) chip::System::SystemClock().SetClock_RealTime(chip::System::SystemClock().GetMonotonicMicroseconds64());
+
 
 #if defined(CONFIG_CHIP_WIFI)
     // Ensure Wi‑Fi commissioning cluster is registered
