@@ -67,6 +67,7 @@
 
 #include <platform/ConfigurationManager.h>
 #include <platform/KeyValueStoreManager.h>
+#include <platform/Zephyr/KeyValueStoreManagerImpl.h>
 
 #ifdef CONFIG_PM
 #include <zephyr/pm/pm.h>
@@ -114,8 +115,10 @@ namespace
 {
 
 // Guard to prevent duplicate registration / init across reboots
-static bool sOneTimeMatterInitDone = false;
-static bool sFactoryResetScheduled  = false;
+static bool sFactoryResetScheduled       = false;
+static bool sAccessOverridesRegistered   = false;
+static bool sFabricDelegateRegistered    = false;
+static bool sAclListenerRegistered       = false;
 
 chip::Credentials::GroupDataProviderImpl gGroupDataProvider;
 
@@ -123,7 +126,11 @@ static size_t MatterMaxFabrics();
 static bool EnsureFabricSlot();
 static void FactoryResetEventHandler(const chip::DeviceLayer::ChipDeviceEvent * event, intptr_t arg);
 static void DoFactoryResetLikeNordic();
-static void FullCommissioningCleanup();
+static CHIP_ERROR DoFullMatterWipe();
+static CHIP_ERROR EnsureCaseAdminEntryForFabric(chip::FabricIndex fabricIndex);
+static void NotifyAclChanged();
+static void EnsureAccessControlReady();
+static void AssertRootAccessControlReady();
 
 class AccessControlLimitsAttrAccess : public chip::app::AttributeAccessInterface
 {
@@ -169,6 +176,20 @@ public:
 
 AccessControlLimitsAttrAccess gAclLimitsAttrAccess;
 
+constexpr chip::NodeId kCaseAdminSubjectId = 0x0000000000000002ULL;
+
+class AccessControlEntryListener final : public chip::Access::AccessControl::EntryListener
+{
+public:
+    void OnEntryChanged(const chip::Access::SubjectDescriptor *, chip::FabricIndex, size_t,
+                        const chip::Access::AccessControl::Entry *, ChangeType) override
+    {
+        NotifyAclChanged();
+    }
+};
+
+AccessControlEntryListener gAccessControlEntryListener;
+
 static bool gPluginsInitialized = false;
 
 static void InitEventLogging()
@@ -204,6 +225,41 @@ static void InitializeGeneratedPluginsOnce()
 
     MATTER_PLUGINS_INIT;
     gPluginsInitialized = true;
+}
+
+static void NotifyAclChanged()
+{
+    auto * engine = chip::app::InteractionModelEngine::GetInstance();
+    if (engine == nullptr)
+    {
+        return;
+    }
+
+    using namespace chip::app::Clusters::AccessControl::Attributes;
+
+    chip::app::AttributePathParams paths[] = {
+        chip::app::AttributePathParams(0, chip::app::Clusters::AccessControl::Id, Acl::Id),
+        chip::app::AttributePathParams(0, chip::app::Clusters::AccessControl::Id, AccessControlEntriesPerFabric::Id),
+        chip::app::AttributePathParams(0, chip::app::Clusters::AccessControl::Id, SubjectsPerAccessControlEntry::Id),
+        chip::app::AttributePathParams(0, chip::app::Clusters::AccessControl::Id, TargetsPerAccessControlEntry::Id),
+    };
+
+    for (auto & path : paths)
+    {
+        (void) engine->GetReportingEngine().SetDirty(path);
+    }
+}
+
+static void EnsureAccessControlReady()
+{
+    size_t entryCount = 0;
+    VerifyOrDie(chip::Access::GetAccessControl().GetEntryCount(entryCount) == CHIP_NO_ERROR);
+}
+
+static void AssertRootAccessControlReady()
+{
+    VerifyOrDie(emberAfContainsServer(0, chip::app::Clusters::AccessControl::Id));
+    NotifyAclChanged();
 }
 
 static bool IsBenignNotFound(CHIP_ERROR err)
@@ -284,6 +340,9 @@ static bool TryEvictIdleFabric()
             (void) groups->RemoveFabric(candidate);
         }
 
+        (void) chip::Access::GetAccessControl().DeleteAllEntriesForFabric(candidate);
+        NotifyAclChanged();
+
         CHIP_ERROR err = fabricTable.Delete(candidate);
         if (err != CHIP_NO_ERROR && err != CHIP_ERROR_NOT_FOUND)
         {
@@ -316,6 +375,80 @@ static bool EnsureFabricSlot()
     return evicted;
 }
 
+static CHIP_ERROR EnsureCaseAdminEntryForFabric(chip::FabricIndex fabricIndex)
+{
+    if (fabricIndex == chip::kUndefinedFabricIndex)
+    {
+        return CHIP_NO_ERROR;
+    }
+
+    auto & accessControl = chip::Access::GetAccessControl();
+
+    size_t entryCount = 0;
+    CHIP_ERROR err    = accessControl.GetEntryCount(fabricIndex, entryCount);
+    if (err != CHIP_NO_ERROR)
+    {
+        ChipLogError(AppServer, "ACL seed: unable to query entry count for fabric 0x%02x: %s", fabricIndex,
+                     chip::ErrorStr(err));
+        return err;
+    }
+
+    if (entryCount > 0)
+    {
+        return CHIP_NO_ERROR;
+    }
+
+    chip::Access::AccessControl::Entry newEntry;
+    err = accessControl.PrepareEntry(newEntry);
+    if (err != CHIP_NO_ERROR)
+    {
+        ChipLogError(AppServer, "ACL seed: prepare entry failed for fabric 0x%02x: %s", fabricIndex, chip::ErrorStr(err));
+        return err;
+    }
+
+    (void) newEntry.SetFabricIndex(fabricIndex);
+    (void) newEntry.SetPrivilege(chip::Access::Privilege::kAdminister);
+    (void) newEntry.SetAuthMode(chip::Access::AuthMode::kCase);
+
+    err = newEntry.AddSubject(nullptr, kCaseAdminSubjectId);
+    if (err != CHIP_NO_ERROR)
+    {
+        ChipLogError(AppServer, "ACL seed: failed adding subject for fabric 0x%02x: %s", fabricIndex, chip::ErrorStr(err));
+        return err;
+    }
+
+    size_t newIndex = 0;
+    err             = accessControl.CreateEntry(nullptr, fabricIndex, &newIndex, newEntry);
+    if (err == CHIP_ERROR_INCORRECT_STATE)
+    {
+        return CHIP_NO_ERROR;
+    }
+    if (err != CHIP_NO_ERROR)
+    {
+        ChipLogError(AppServer, "ACL seed: create entry failed for fabric 0x%02x: %s", fabricIndex, chip::ErrorStr(err));
+        return err;
+    }
+
+    ChipLogProgress(AppServer, "ACL seed: created CASE Admin entry for fabric index 0x%02x (ACL index %zu)", fabricIndex, newIndex);
+    NotifyAclChanged();
+    return CHIP_NO_ERROR;
+}
+
+class CaseAdminAclFabricDelegate final : public chip::FabricTable::Delegate
+{
+public:
+    void OnFabricCommitted(const chip::FabricTable &, chip::FabricIndex fabricIndex) override
+    {
+        CHIP_ERROR err = EnsureCaseAdminEntryForFabric(fabricIndex);
+        if (err != CHIP_NO_ERROR)
+        {
+            ChipLogError(AppServer, "ACL seed: failed for fabric 0x%02x: %s", fabricIndex, chip::ErrorStr(err));
+        }
+    }
+};
+
+CaseAdminAclFabricDelegate gCaseAdminAclFabricDelegate;
+
 class CommissioningCapacityDelegate final : public ::AppDelegate
 {
 public:
@@ -325,7 +458,7 @@ public:
 
 CommissioningCapacityDelegate gCommissioningCapacityDelegate;
 
-static void FullCommissioningCleanup()
+static CHIP_ERROR DoFullMatterWipe()
 {
     using namespace chip;
     using namespace chip::DeviceLayer;
@@ -344,6 +477,7 @@ static void FullCommissioningCleanup()
 
     std::vector<FabricIndex> fabricsToDelete;
     fabricsToDelete.reserve(MatterMaxFabrics());
+    CHIP_ERROR firstError = CHIP_NO_ERROR;
 
     auto & fabricTable = server.GetFabricTable();
     for (auto it = fabricTable.begin(); it != fabricTable.end(); ++it)
@@ -357,12 +491,13 @@ static void FullCommissioningCleanup()
 
     auto * resumption    = server.GetSessionResumptionStorage();
     auto * groupProvider = server.GetGroupDataProvider();
+    auto * caseManager   = server.GetCASESessionManager();
 
     for (FabricIndex fabricIndex : fabricsToDelete)
     {
         server.GetSecureSessionManager().ExpireAllSessionsForFabric(fabricIndex);
 
-        if (auto * caseManager = server.GetCASESessionManager(); caseManager != nullptr)
+        if (caseManager != nullptr)
         {
             caseManager->ReleaseSessionsForFabric(fabricIndex);
         }
@@ -374,6 +509,10 @@ static void FullCommissioningCleanup()
             {
                 ChipLogProgress(AppServer, "Failed to clear resumption cache for fabric 0x%02x: %s", fabricIndex,
                                 chip::ErrorStr(err));
+                if (firstError == CHIP_NO_ERROR)
+                {
+                    firstError = err;
+                }
             }
         }
 
@@ -384,6 +523,10 @@ static void FullCommissioningCleanup()
             {
                 ChipLogProgress(AppServer, "Failed to remove group data for fabric 0x%02x: %s", fabricIndex,
                                 chip::ErrorStr(err));
+                if (firstError == CHIP_NO_ERROR)
+                {
+                    firstError = err;
+                }
             }
         }
 
@@ -391,16 +534,45 @@ static void FullCommissioningCleanup()
         if (fabricErr != CHIP_NO_ERROR && fabricErr != CHIP_ERROR_NOT_FOUND)
         {
             ChipLogProgress(AppServer, "Fabric delete failed for index 0x%02x: %s", fabricIndex, chip::ErrorStr(fabricErr));
+            if (firstError == CHIP_NO_ERROR)
+            {
+                firstError = fabricErr;
+            }
         }
 
         (void) Access::GetAccessControl().DeleteAllEntriesForFabric(fabricIndex);
     }
 
     Access::ResetAccessControlToDefault();
+    NotifyAclChanged();
 
-    ChipLogProgress(AppServer, "KeyValueStore clear delegated to platform factory reset");
+    server.Shutdown();
 
-    ChipLogProgress(AppServer, "FullCommissioningCleanup done.");
+    CHIP_ERROR kvsErr = PersistedStorage::KeyValueStoreMgrImpl().DoFactoryReset();
+    if (kvsErr != CHIP_NO_ERROR)
+    {
+        ChipLogProgress(AppServer, "KeyValueStore factory reset failed: %s", chip::ErrorStr(kvsErr));
+        if (firstError == CHIP_NO_ERROR)
+        {
+            firstError = kvsErr;
+        }
+    }
+
+    app::EventManagement::DestroyEventManagement();
+
+    server.GetFailSafeContext().DisarmFailSafe();
+
+    PlatformMgr().ScheduleWork([](intptr_t) {
+        int rc = settings_save();
+        if (rc != 0)
+        {
+            LOG_WRN("settings_save failed: %d", rc);
+        }
+    });
+
+    ChipLogProgress(AppServer, "DoFullMatterWipe completed");
+
+    return firstError;
 }
 
 static void DoFactoryResetLikeNordic()
@@ -411,8 +583,16 @@ static void DoFactoryResetLikeNordic()
     }
 
     sFactoryResetScheduled = true;
-    FullCommissioningCleanup();
-    chip::DeviceLayer::ConfigurationMgr().InitiateFactoryReset();
+
+    CHIP_ERROR wipeErr = DoFullMatterWipe();
+    if (wipeErr != CHIP_NO_ERROR)
+    {
+        ChipLogError(AppServer, "DoFullMatterWipe failed: %s", chip::ErrorStr(wipeErr));
+    }
+
+    constexpr uint32_t kResetDelayMs = 150;
+    k_msleep(kResetDelayMs);
+    NVIC_SystemReset();
 }
 
 static void FactoryResetEventHandler(const chip::DeviceLayer::ChipDeviceEvent * event, intptr_t)
@@ -586,18 +766,19 @@ extern "C" int main(void)
 
     chip::Server & server = chip::Server::GetInstance();
 
-    if (!sOneTimeMatterInitDone)
-    {
-        if (!chip::app::AttributeAccessInterfaceRegistry::Instance().Register(&gAclLimitsAttrAccess))
-        {
-            LOG_WRN("ACL limits attribute was already registered");
-        }
-        sOneTimeMatterInitDone = true;
-    }
-
     err = server.Init(initParams);
 
     if (err != CHIP_NO_ERROR) { LOG_ERR("Matter Server init failed: %ld", (long)err.AsInteger()); return -2; }
+
+    if (!sAccessOverridesRegistered)
+    {
+        bool registered = chip::app::AttributeAccessInterfaceRegistry::Instance().Register(&gAclLimitsAttrAccess);
+        if (!registered)
+        {
+            LOG_WRN("ACL limits attribute was already registered");
+        }
+        sAccessOverridesRegistered = true;
+    }
 
     InitEventLogging();
 
@@ -617,6 +798,47 @@ extern "C" int main(void)
     }
 
     InitializeGeneratedPluginsOnce();
+
+    EnsureAccessControlReady();
+    AssertRootAccessControlReady();
+
+    {
+        auto & accessControl = chip::Access::GetAccessControl();
+        if (!sAclListenerRegistered)
+        {
+            accessControl.AddEntryListener(gAccessControlEntryListener);
+            sAclListenerRegistered = true;
+        }
+
+        if (!sFabricDelegateRegistered)
+        {
+            CHIP_ERROR delegateErr = server.GetFabricTable().AddFabricDelegate(&gCaseAdminAclFabricDelegate);
+            if (delegateErr == CHIP_NO_ERROR)
+            {
+                sFabricDelegateRegistered = true;
+            }
+            else if (delegateErr != CHIP_ERROR_NO_MEMORY && delegateErr != CHIP_ERROR_INCORRECT_STATE)
+            {
+                ChipLogError(AppServer, "Failed to register fabric ACL delegate: %s", chip::ErrorStr(delegateErr));
+            }
+        }
+
+        for (auto it = server.GetFabricTable().begin(); it != server.GetFabricTable().end(); ++it)
+        {
+            const chip::FabricInfo & info = *it;
+            if (!info.IsInitialized())
+            {
+                continue;
+            }
+
+            CHIP_ERROR ensureErr = EnsureCaseAdminEntryForFabric(info.GetFabricIndex());
+            if (ensureErr != CHIP_NO_ERROR)
+            {
+                ChipLogError(AppServer, "EnsureCaseAdminEntryForFabric failed for fabric 0x%02x: %s",
+                             static_cast<unsigned>(info.GetFabricIndex()), chip::ErrorStr(ensureErr));
+            }
+        }
+    }
 
     if (server.GetFabricTable().FabricCount() == 0)
     {
