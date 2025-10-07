@@ -115,10 +115,9 @@ namespace
 {
 
 // Guard to prevent duplicate registration / init across reboots
-static bool sFactoryResetScheduled       = false;
-static bool sAccessOverridesRegistered   = false;
-static bool sFabricDelegateRegistered    = false;
-static bool sAclListenerRegistered       = false;
+static bool sFactoryResetScheduled    = false;
+static bool sFabricDelegateRegistered = false;
+static bool sAclListenerRegistered    = false;
 
 chip::Credentials::GroupDataProviderImpl gGroupDataProvider;
 
@@ -131,50 +130,6 @@ static CHIP_ERROR EnsureCaseAdminEntryForFabric(chip::FabricIndex fabricIndex);
 static void NotifyAclChanged();
 static void EnsureAccessControlReady();
 static void AssertRootAccessControlReady();
-
-class AccessControlLimitsAttrAccess : public chip::app::AttributeAccessInterface
-{
-public:
-    AccessControlLimitsAttrAccess() :
-        chip::app::AttributeAccessInterface(chip::Optional<chip::EndpointId>::Missing(),
-                                            chip::app::Clusters::AccessControl::Id)
-    {}
-
-    CHIP_ERROR Read(const chip::app::ConcreteReadAttributePath & path,
-                    chip::app::AttributeValueEncoder & encoder) override
-    {
-        using namespace chip::app::Clusters::AccessControl::Attributes;
-
-        auto & ac = chip::Access::GetAccessControl();
-
-        size_t entriesPerFabric = CONFIG_CHIP_ACL_MAX_ENTRIES_PER_FABRIC;
-        size_t subjectsPerEntry = CONFIG_CHIP_ACL_MAX_SUBJECTS_PER_ENTRY;
-        size_t targetsPerEntry  = CONFIG_CHIP_ACL_MAX_TARGETS_PER_ENTRY;
-
-        (void) ac.GetMaxEntriesPerFabric(entriesPerFabric);
-        (void) ac.GetMaxSubjectsPerEntry(subjectsPerEntry);
-        (void) ac.GetMaxTargetsPerEntry(targetsPerEntry);
-
-        if (path.mAttributeId == AccessControlEntriesPerFabric::Id)
-        {
-            return encoder.Encode(static_cast<uint16_t>(entriesPerFabric));
-        }
-
-        if (path.mAttributeId == SubjectsPerAccessControlEntry::Id)
-        {
-            return encoder.Encode(static_cast<uint16_t>(subjectsPerEntry));
-        }
-
-        if (path.mAttributeId == TargetsPerAccessControlEntry::Id)
-        {
-            return encoder.Encode(static_cast<uint16_t>(targetsPerEntry));
-        }
-
-        return CHIP_NO_ERROR;
-    }
-};
-
-AccessControlLimitsAttrAccess gAclLimitsAttrAccess;
 
 constexpr chip::NodeId kCaseAdminSubjectId = 0x0000000000000002ULL;
 
@@ -189,8 +144,6 @@ public:
 };
 
 AccessControlEntryListener gAccessControlEntryListener;
-
-static bool gPluginsInitialized = false;
 
 static void InitEventLogging()
 {
@@ -214,17 +167,6 @@ static CHIP_ERROR InitManagementClusters()
 
     chip::Credentials::SetGroupDataProvider(&gGroupDataProvider);
     return CHIP_NO_ERROR;
-}
-
-static void InitializeGeneratedPluginsOnce()
-{
-    if (gPluginsInitialized)
-    {
-        return;
-    }
-
-    MATTER_PLUGINS_INIT;
-    gPluginsInitialized = true;
 }
 
 static void NotifyAclChanged()
@@ -770,16 +712,6 @@ extern "C" int main(void)
 
     if (err != CHIP_NO_ERROR) { LOG_ERR("Matter Server init failed: %ld", (long)err.AsInteger()); return -2; }
 
-    if (!sAccessOverridesRegistered)
-    {
-        bool registered = chip::app::AttributeAccessInterfaceRegistry::Instance().Register(&gAclLimitsAttrAccess);
-        if (!registered)
-        {
-            LOG_WRN("ACL limits attribute was already registered");
-        }
-        sAccessOverridesRegistered = true;
-    }
-
     InitEventLogging();
 
 #if CHIP_DEVICE_CONFIG_ENABLE_DYNAMIC_MRP_CONFIG
@@ -796,8 +728,6 @@ extern "C" int main(void)
     {
         ChipLogError(AppServer, "Management cluster init failed: %s", chip::ErrorStr(managementErr));
     }
-
-    InitializeGeneratedPluginsOnce();
 
     EnsureAccessControlReady();
     AssertRootAccessControlReady();
