@@ -21,6 +21,7 @@
 #include "AppConfig.h"
 #include "app/AppEvent.h"
 #include "LEDUtil.h"
+#include "matter/IdentifyHandler.h"
 
 #include <app/server/Server.h>
 #include <lib/support/CodeUtils.h>
@@ -96,6 +97,7 @@ CHIP_ERROR AppTask::Init()
     LEDWidget::SetStateUpdateCallback(LEDStateUpdateHandler);
 
     sStatusLED.Init(SYSTEM_STATE_LED);
+    IdentifyHandler_Init();
 #if HAS_FACTORY_RESET_LEDS
     sFactoryResetLEDs.Set(false);
 #endif
