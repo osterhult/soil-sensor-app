@@ -75,12 +75,18 @@ target_compile_definitions(app PRIVATE CHIP_CONFIG_ENABLE_ACL_EXTENSIONS=1)
 
 # === Sources / includes ===
 target_sources(app PRIVATE
-  ${CMAKE_CURRENT_LIST_DIR}/main/main.cpp
-  ${CMAKE_CURRENT_LIST_DIR}/main/AppTask.cpp
-  ${CMAKE_CURRENT_LIST_DIR}/main/AppEvent.cpp
-  ${CMAKE_CURRENT_LIST_DIR}/main/LEDWidget.cpp
-  ${CMAKE_CURRENT_LIST_DIR}/main/SoilSensorManager.cpp
-  ${CMAKE_CURRENT_LIST_DIR}/main/SoilDeviceInfoProvider.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/main/src/main.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/main/src/app/AppTask.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/main/src/app/AppEvent.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/main/src/app/factory_reset.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/main/src/cfg/app_config.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/main/src/connectivity/ble_manager.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/access_manager.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/server_runtime.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/SoilDeviceInfoProvider.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/main/src/platform/LEDWidget.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/main/src/sensors/soil_moisture_sensor.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/main/src/sensors/SoilSensorManager.cpp
   ${CHIP_ROOT}/src/credentials/examples/ExampleDACs.cpp
   # Bring in example DeviceInfoProvider used by Nordic samples to print onboarding info
   ${CHIP_ROOT}/examples/providers/DeviceInfoProviderImpl.cpp
@@ -88,8 +94,8 @@ target_sources(app PRIVATE
 
 # App-local includes; ZAP includes are added by chip_configure_data_model()
 target_include_directories(app PRIVATE
-  ${CMAKE_CURRENT_LIST_DIR}/main/include
-  ${CMAKE_CURRENT_LIST_DIR}/main
+  ${CMAKE_CURRENT_SOURCE_DIR}/main/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/main
   ${SOILSENSOR_COMMON}
   ${CHIP_ROOT}/examples/providers
 )

@@ -19,7 +19,7 @@
 #pragma once
 
 #include "AppEvent.h"
-#include "LEDWidget.h"
+#include "platform/LEDWidget.h"
 
 #include <platform/CHIPDeviceLayer.h>
 

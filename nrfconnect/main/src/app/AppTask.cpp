@@ -16,10 +16,10 @@
  *    limitations under the License.
  */
 
-#include "AppTask.h"
+#include "app/AppTask.h"
 
 #include "AppConfig.h"
-#include "AppEvent.h"
+#include "app/AppEvent.h"
 #include "LEDUtil.h"
 
 #include <app/server/Server.h>

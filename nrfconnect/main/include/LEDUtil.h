@@ -17,7 +17,7 @@
 
 #pragma once
 
-#include "LEDWidget.h"
+#include "platform/LEDWidget.h"
 
 #include <array>
 #include <utility>

@@ -1,4 +1,4 @@
-#include "SoilDeviceInfoProvider.h"
+#include "matter/SoilDeviceInfoProvider.h"
 
 #include <lib/support/CHIPMemString.h>
 #include <lib/support/CodeUtils.h>
