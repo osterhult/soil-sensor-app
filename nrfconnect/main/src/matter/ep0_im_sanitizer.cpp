@@ -20,7 +20,8 @@ namespace {
 using chip::app::AttributeValueEncoder;
 using chip::app::ConcreteReadAttributePath;
 
-constexpr chip::EndpointId kEp0 = 0;
+constexpr chip::EndpointId kEp0          = 0;
+constexpr chip::EndpointId kSoilEndpoint = 1;
 
 constexpr chip::ClusterId kBasicInfoCluster    = chip::app::Clusters::BasicInformation::Id;
 constexpr chip::ClusterId kDescriptorCluster   = chip::app::Clusters::Descriptor::Id;
@@ -56,7 +57,8 @@ constexpr uint16_t kIcdClusterRevision  = 3;
 constexpr uint16_t kGkmClusterRevision  = 2;
 constexpr uint16_t kDescriptorClusterRevision = 2;
 
-constexpr chip::DeviceTypeId kRootDeviceType = static_cast<chip::DeviceTypeId>(0x0016);
+constexpr chip::DeviceTypeId kRootDeviceType       = static_cast<chip::DeviceTypeId>(0x0016);
+constexpr chip::DeviceTypeId kSoilSensorDeviceType = static_cast<chip::DeviceTypeId>(0x0045);
 
 constexpr chip::ClusterId kRootServerClusters[] = {
     chip::app::Clusters::Descriptor::Id,
@@ -74,6 +76,12 @@ constexpr chip::ClusterId kRootServerClusters[] = {
 };
 
 constexpr chip::EndpointId kRootPartsList[] = { 1 };
+
+constexpr chip::ClusterId kSoilServerClusters[] = {
+    chip::app::Clusters::Identify::Id,
+    chip::app::Clusters::Descriptor::Id,
+    chip::app::Clusters::SoilMeasurement::Id,
+};
 
 template <typename T>
 CHIP_ERROR EncodeSimpleList(AttributeValueEncoder & aEncoder, const T * values, size_t count)
@@ -105,18 +113,18 @@ CHIP_ERROR EncodeEmptyList(AttributeValueEncoder & aEncoder)
 
 } // namespace
 
-AttrListSanitizer::AttrListSanitizer(chip::ClusterId clusterId) :
-    AttributeAccessInterface(chip::MakeOptional(kEp0), clusterId), mClusterId(clusterId)
+AttrListSanitizer::AttrListSanitizer(chip::EndpointId endpoint, chip::ClusterId clusterId) :
+    AttributeAccessInterface(chip::MakeOptional(endpoint), clusterId), mEndpoint(endpoint), mClusterId(clusterId)
 {}
 
-bool AttrListSanitizer::IsEp0(const ConcreteReadAttributePath & aPath) const
+bool AttrListSanitizer::IsTargetEndpoint(const ConcreteReadAttributePath & aPath) const
 {
-    return aPath.mEndpointId == kEp0;
+    return aPath.mEndpointId == mEndpoint;
 }
 
 CHIP_ERROR AttrListSanitizer::Read(const ConcreteReadAttributePath & aPath, AttributeValueEncoder & aEncoder)
 {
-    if (!IsEp0(aPath) || aPath.mClusterId != mClusterId)
+    if (!IsTargetEndpoint(aPath) || aPath.mClusterId != mClusterId)
     {
         return CHIP_NO_ERROR;
     }
@@ -164,21 +172,46 @@ CHIP_ERROR AttrListSanitizer::Read(const ConcreteReadAttributePath & aPath, Attr
         case kDescriptorDeviceTypeList: {
             using DeviceTypeStruct = chip::app::Clusters::Descriptor::Structs::DeviceTypeStruct::Type;
             DeviceTypeStruct deviceType;
-            deviceType.deviceType = kRootDeviceType;
-            deviceType.revision   = 1;
+            if (mEndpoint == kEp0)
+            {
+                deviceType.deviceType = kRootDeviceType;
+                deviceType.revision   = 3;
+            }
+            else if (mEndpoint == kSoilEndpoint)
+            {
+                deviceType.deviceType = kSoilSensorDeviceType;
+                deviceType.revision   = 1;
+            }
+            else
+            {
+                return CHIP_NO_ERROR;
+            }
+
             return aEncoder.EncodeList([&](auto && encoder) -> CHIP_ERROR {
                 ReturnErrorOnFailure(encoder.Encode(deviceType));
                 return CHIP_NO_ERROR;
             });
         }
         case kDescriptorServerList:
-            return EncodeSimpleList(aEncoder, kRootServerClusters, sizeof(kRootServerClusters) / sizeof(kRootServerClusters[0]));
+            if (mEndpoint == kSoilEndpoint)
+            {
+                return EncodeSimpleList(aEncoder, kSoilServerClusters,
+                                        sizeof(kSoilServerClusters) / sizeof(kSoilServerClusters[0]));
+            }
+            return EncodeSimpleList(aEncoder, kRootServerClusters,
+                                    sizeof(kRootServerClusters) / sizeof(kRootServerClusters[0]));
         case kDescriptorClientList:
             return EncodeEmptyList(aEncoder);
         case kDescriptorPartsList:
-            return EncodeSimpleList(aEncoder, kRootPartsList, sizeof(kRootPartsList) / sizeof(kRootPartsList[0]));
-        case kFeatureMapId:
-            return aEncoder.Encode(static_cast<uint32_t>(0));
+            if (mEndpoint == kEp0)
+            {
+#if CONFIG_SOIL_ENDPOINT
+                return EncodeSimpleList(aEncoder, kRootPartsList, sizeof(kRootPartsList) / sizeof(kRootPartsList[0]));
+#else
+                return EncodeEmptyList(aEncoder);
+#endif
+            }
+            return EncodeEmptyList(aEncoder);
         case kGeneratedCmdListId:
         case kAcceptedCmdListId:
             return EncodeEmptyList(aEncoder);
@@ -189,6 +222,8 @@ CHIP_ERROR AttrListSanitizer::Read(const ConcreteReadAttributePath & aPath, Attr
             };
             return EncodeSimpleList(aEncoder, kAttributes, sizeof(kAttributes) / sizeof(kAttributes[0]));
         }
+        case kFeatureMapId:
+            return aEncoder.Encode(static_cast<uint32_t>(0));
         case kClusterRevisionId:
             return aEncoder.Encode(kDescriptorClusterRevision);
         default:
@@ -269,11 +304,14 @@ CHIP_ERROR AttrListSanitizer::Read(const ConcreteReadAttributePath & aPath, Attr
 
 void Register()
 {
-    static AttrListSanitizer sBasicInfo(kBasicInfoCluster);
-    static AttrListSanitizer sDescriptor(kDescriptorCluster);
-    static AttrListSanitizer sTimeSync(kTimeSyncCluster);
-    static AttrListSanitizer sIcd(kIcdCluster);
-    static AttrListSanitizer sGkm(kGroupKeyMgmtCluster);
+    static AttrListSanitizer sBasicInfo(kEp0, kBasicInfoCluster);
+    static AttrListSanitizer sDescriptor(kEp0, kDescriptorCluster);
+#if CONFIG_SOIL_ENDPOINT
+    static AttrListSanitizer sDescriptorSoil(kSoilEndpoint, kDescriptorCluster);
+#endif
+    static AttrListSanitizer sTimeSync(kEp0, kTimeSyncCluster);
+    static AttrListSanitizer sIcd(kEp0, kIcdCluster);
+    static AttrListSanitizer sGkm(kEp0, kGroupKeyMgmtCluster);
 
     auto & registry = chip::app::AttributeAccessInterfaceRegistry::Instance();
 
@@ -294,6 +332,17 @@ void Register()
     {
         ChipLogProgress(Zcl, "Descriptor sanitizer registered");
     }
+
+#if CONFIG_SOIL_ENDPOINT
+    if (!registry.Register(&sDescriptorSoil))
+    {
+        ChipLogError(Zcl, "Descriptor sanitizer already registered for soil endpoint");
+    }
+    else
+    {
+        ChipLogProgress(Zcl, "Descriptor sanitizer registered for soil endpoint");
+    }
+#endif
 
     if (!registry.Register(&sTimeSync))
     {

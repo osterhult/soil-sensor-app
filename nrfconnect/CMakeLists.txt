@@ -92,6 +92,7 @@ target_sources(app PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/platform/LEDWidget.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/sensors/soil_moisture_sensor.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/sensors/SoilSensorManager.cpp
+  ${CHIP_ROOT}/src/app/clusters/soil-measurement-server/soil-measurement-cluster.cpp
   ${CHIP_ROOT}/src/credentials/examples/ExampleDACs.cpp
   # Bring in example DeviceInfoProvider used by Nordic samples to print onboarding info
   ${CHIP_ROOT}/examples/providers/DeviceInfoProviderImpl.cpp

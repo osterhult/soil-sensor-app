@@ -10,14 +10,15 @@ namespace ep0 {
 class AttrListSanitizer : public chip::app::AttributeAccessInterface
 {
 public:
-    explicit AttrListSanitizer(chip::ClusterId clusterId);
+    AttrListSanitizer(chip::EndpointId endpoint, chip::ClusterId clusterId);
 
     CHIP_ERROR Read(const chip::app::ConcreteReadAttributePath & aPath,
                     chip::app::AttributeValueEncoder & aEncoder) override;
 
 private:
-    bool IsEp0(const chip::app::ConcreteReadAttributePath & aPath) const;
+    bool IsTargetEndpoint(const chip::app::ConcreteReadAttributePath & aPath) const;
 
+    chip::EndpointId mEndpoint;
     chip::ClusterId mClusterId;
 };
 

@@ -2672,18 +2672,18 @@
       "id": 2,
       "name": "Anonymous Endpoint Type",
       "deviceTypeRef": {
-        "code": 64513,
+        "code": 69,
         "profileId": 259,
-        "label": "MA-proprietary",
-        "name": "MA-proprietary",
+        "label": "MA-soilsensor",
+        "name": "MA-soilsensor",
         "deviceTypeOrder": 0
       },
       "deviceTypes": [
         {
-          "code": 64513,
+          "code": 69,
           "profileId": 259,
-          "label": "MA-proprietary",
-          "name": "MA-proprietary",
+          "label": "MA-soilsensor",
+          "name": "MA-soilsensor",
           "deviceTypeOrder": 0
         }
       ],
@@ -2691,10 +2691,10 @@
         1
       ],
       "deviceIdentifiers": [
-        64513
+        69
       ],
-      "deviceTypeName": "MA-proprietary",
-      "deviceTypeCode": 64513,
+      "deviceTypeName": "MA-soilsensor",
+      "deviceTypeCode": 69,
       "deviceTypeProfileId": 259,
       "clusters": [
         {
