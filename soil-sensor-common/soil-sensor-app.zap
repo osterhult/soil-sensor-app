@@ -69,7 +69,7 @@
           "mfgCode": null,
           "define": "DESCRIPTOR_CLUSTER",
           "side": "server",
-          "enabled": 0,
+          "enabled": 1,
           "attributes": [
             {
               "name": "DeviceTypeList",
@@ -209,7 +209,7 @@
               "storageOption": "External",
               "singleton": 0,
               "bounded": 0,
-              "defaultValue": "",
+              "defaultValue": "2",
               "reportable": 1,
               "minInterval": 1,
               "maxInterval": 65534,
@@ -2117,7 +2117,7 @@
               "storageOption": "External",
               "singleton": 0,
               "bounded": 0,
-              "defaultValue": "",
+              "defaultValue": "2",
               "reportable": 1,
               "minInterval": 1,
               "maxInterval": 65534,
@@ -2579,7 +2579,7 @@
             {
               "bounded": 0,
               "code": 65533,
-              "defaultValue": "1",
+              "defaultValue": "3",
               "included": 1,
               "maxInterval": 65534,
               "mfgCode": null,
@@ -2672,18 +2672,18 @@
       "id": 2,
       "name": "Anonymous Endpoint Type",
       "deviceTypeRef": {
-        "code": 69,
+        "code": 64513,
         "profileId": 259,
-        "label": "MA-soilsensor",
-        "name": "MA-soilsensor",
+        "label": "MA-proprietary",
+        "name": "MA-proprietary",
         "deviceTypeOrder": 0
       },
       "deviceTypes": [
         {
-          "code": 69,
+          "code": 64513,
           "profileId": 259,
-          "label": "MA-soilsensor",
-          "name": "MA-soilsensor",
+          "label": "MA-proprietary",
+          "name": "MA-proprietary",
           "deviceTypeOrder": 0
         }
       ],
@@ -2691,10 +2691,10 @@
         1
       ],
       "deviceIdentifiers": [
-        69
+        64513
       ],
-      "deviceTypeName": "MA-soilsensor",
-      "deviceTypeCode": 69,
+      "deviceTypeName": "MA-proprietary",
+      "deviceTypeCode": 64513,
       "deviceTypeProfileId": 259,
       "clusters": [
         {
@@ -2975,7 +2975,7 @@
               "storageOption": "External",
               "singleton": 0,
               "bounded": 0,
-              "defaultValue": "",
+              "defaultValue": "2",
               "reportable": 1,
               "minInterval": 1,
               "maxInterval": 65534,

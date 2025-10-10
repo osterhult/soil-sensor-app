@@ -1,5 +1,6 @@
 #include "ep0_im_sanitizer.h"
 
+#include <app-common/zap-generated/cluster-objects.h>
 #include <app-common/zap-generated/ids/Clusters.h>
 #include <app/AttributeAccessInterfaceRegistry.h>
 #include <app/AttributeValueEncoder.h>
@@ -21,9 +22,11 @@ using chip::app::ConcreteReadAttributePath;
 
 constexpr chip::EndpointId kEp0 = 0;
 
-constexpr chip::ClusterId kBasicInfoCluster = chip::app::Clusters::BasicInformation::Id;
-constexpr chip::ClusterId kTimeSyncCluster  = chip::app::Clusters::TimeSynchronization::Id;
-constexpr chip::ClusterId kIcdCluster       = static_cast<chip::ClusterId>(0x0046);
+constexpr chip::ClusterId kBasicInfoCluster    = chip::app::Clusters::BasicInformation::Id;
+constexpr chip::ClusterId kDescriptorCluster   = chip::app::Clusters::Descriptor::Id;
+constexpr chip::ClusterId kTimeSyncCluster     = chip::app::Clusters::TimeSynchronization::Id;
+constexpr chip::ClusterId kIcdCluster          = static_cast<chip::ClusterId>(0x0046);
+constexpr chip::ClusterId kGroupKeyMgmtCluster = chip::app::Clusters::GroupKeyManagement::Id;
 
 constexpr chip::AttributeId kFeatureMapId       = 0xFFFC;
 constexpr chip::AttributeId kClusterRevisionId  = 0xFFFD;
@@ -42,14 +45,43 @@ constexpr chip::AttributeId kIcdIdleModeDuration    = 0x0000;
 constexpr chip::AttributeId kIcdActiveModeDuration  = 0x0001;
 constexpr chip::AttributeId kIcdActiveModeThreshold = 0x0002;
 
+constexpr chip::AttributeId kDescriptorDeviceTypeList = 0x0000;
+constexpr chip::AttributeId kDescriptorServerList     = 0x0001;
+constexpr chip::AttributeId kDescriptorClientList     = 0x0002;
+constexpr chip::AttributeId kDescriptorPartsList      = 0x0003;
+
 constexpr chip::CommandId kTimeSyncSetUtcTime = 0x0000;
 
-CHIP_ERROR EncodeList(AttributeValueEncoder & aEncoder, const chip::AttributeId * attrs, size_t count)
+constexpr uint16_t kIcdClusterRevision  = 3;
+constexpr uint16_t kGkmClusterRevision  = 2;
+constexpr uint16_t kDescriptorClusterRevision = 2;
+
+constexpr chip::DeviceTypeId kRootDeviceType = static_cast<chip::DeviceTypeId>(0x0016);
+
+constexpr chip::ClusterId kRootServerClusters[] = {
+    chip::app::Clusters::Descriptor::Id,
+    chip::app::Clusters::AccessControl::Id,
+    chip::app::Clusters::BasicInformation::Id,
+    chip::app::Clusters::LocalizationConfiguration::Id,
+    chip::app::Clusters::GeneralCommissioning::Id,
+    chip::app::Clusters::NetworkCommissioning::Id,
+    chip::app::Clusters::GeneralDiagnostics::Id,
+    chip::app::Clusters::AdministratorCommissioning::Id,
+    chip::app::Clusters::OperationalCredentials::Id,
+    chip::app::Clusters::GroupKeyManagement::Id,
+    chip::app::Clusters::TimeSynchronization::Id,
+    kIcdCluster,
+};
+
+constexpr chip::EndpointId kRootPartsList[] = { 1 };
+
+template <typename T>
+CHIP_ERROR EncodeSimpleList(AttributeValueEncoder & aEncoder, const T * values, size_t count)
 {
     return aEncoder.EncodeList([&](auto && encoder) -> CHIP_ERROR {
         for (size_t i = 0; i < count; ++i)
         {
-            ReturnErrorOnFailure(encoder.Encode(attrs[i]));
+            ReturnErrorOnFailure(encoder.Encode(values[i]));
         }
         return CHIP_NO_ERROR;
     });
@@ -119,10 +151,49 @@ CHIP_ERROR AttrListSanitizer::Read(const ConcreteReadAttributePath & aPath, Attr
                 kGeneratedCmdListId, kAcceptedCmdListId, kAttributeListId, kClusterRevisionId,
             };
 
-            return EncodeList(aEncoder, kAttributes, sizeof(kAttributes) / sizeof(kAttributes[0]));
+            return EncodeSimpleList(aEncoder, kAttributes, sizeof(kAttributes) / sizeof(kAttributes[0]));
         }
 
         return CHIP_NO_ERROR;
+    }
+
+    if (mClusterId == kDescriptorCluster)
+    {
+        switch (aPath.mAttributeId)
+        {
+        case kDescriptorDeviceTypeList: {
+            using DeviceTypeStruct = chip::app::Clusters::Descriptor::Structs::DeviceTypeStruct::Type;
+            DeviceTypeStruct deviceType;
+            deviceType.deviceType = kRootDeviceType;
+            deviceType.revision   = 1;
+            return aEncoder.EncodeList([&](auto && encoder) -> CHIP_ERROR {
+                ReturnErrorOnFailure(encoder.Encode(deviceType));
+                return CHIP_NO_ERROR;
+            });
+        }
+        case kDescriptorServerList:
+            return EncodeSimpleList(aEncoder, kRootServerClusters, sizeof(kRootServerClusters) / sizeof(kRootServerClusters[0]));
+        case kDescriptorClientList:
+            return EncodeEmptyList(aEncoder);
+        case kDescriptorPartsList:
+            return EncodeSimpleList(aEncoder, kRootPartsList, sizeof(kRootPartsList) / sizeof(kRootPartsList[0]));
+        case kFeatureMapId:
+            return aEncoder.Encode(static_cast<uint32_t>(0));
+        case kGeneratedCmdListId:
+        case kAcceptedCmdListId:
+            return EncodeEmptyList(aEncoder);
+        case kAttributeListId: {
+            constexpr chip::AttributeId kAttributes[] = {
+                kDescriptorDeviceTypeList, kDescriptorServerList, kDescriptorClientList, kDescriptorPartsList,
+                kGeneratedCmdListId, kAcceptedCmdListId, kAttributeListId, kFeatureMapId, kClusterRevisionId,
+            };
+            return EncodeSimpleList(aEncoder, kAttributes, sizeof(kAttributes) / sizeof(kAttributes[0]));
+        }
+        case kClusterRevisionId:
+            return aEncoder.Encode(kDescriptorClusterRevision);
+        default:
+            return CHIP_NO_ERROR;
+        }
     }
 
     if (mClusterId == kTimeSyncCluster)
@@ -142,7 +213,7 @@ CHIP_ERROR AttrListSanitizer::Read(const ConcreteReadAttributePath & aPath, Attr
                 kTimeSyncUtcTime, kTimeSyncGranularity, kTimeSyncTimeSource,
                 kGeneratedCmdListId, kAcceptedCmdListId, kFeatureMapId, kClusterRevisionId, kAttributeListId,
             };
-            return EncodeList(aEncoder, kAttributes, sizeof(kAttributes) / sizeof(kAttributes[0]));
+            return EncodeSimpleList(aEncoder, kAttributes, sizeof(kAttributes) / sizeof(kAttributes[0]));
         }
         case kGeneratedCmdListId:
             return EncodeEmptyList(aEncoder);
@@ -165,6 +236,8 @@ CHIP_ERROR AttrListSanitizer::Read(const ConcreteReadAttributePath & aPath, Attr
             return aEncoder.Encode(static_cast<uint32_t>(0));
         case kIcdActiveModeThreshold:
             return aEncoder.Encode(static_cast<uint16_t>(0));
+        case kClusterRevisionId:
+            return aEncoder.Encode(kIcdClusterRevision);
         case kFeatureMapId:
             return aEncoder.Encode(static_cast<uint32_t>(0));
         case kAttributeListId: {
@@ -172,7 +245,7 @@ CHIP_ERROR AttrListSanitizer::Read(const ConcreteReadAttributePath & aPath, Attr
                 kIcdIdleModeDuration, kIcdActiveModeDuration, kIcdActiveModeThreshold,
                 kGeneratedCmdListId, kAcceptedCmdListId, kFeatureMapId, kClusterRevisionId, kAttributeListId,
             };
-            return EncodeList(aEncoder, kAttributes, sizeof(kAttributes) / sizeof(kAttributes[0]));
+            return EncodeSimpleList(aEncoder, kAttributes, sizeof(kAttributes) / sizeof(kAttributes[0]));
         }
         case kGeneratedCmdListId:
         case kAcceptedCmdListId:
@@ -182,14 +255,25 @@ CHIP_ERROR AttrListSanitizer::Read(const ConcreteReadAttributePath & aPath, Attr
         }
     }
 
+    if (mClusterId == kGroupKeyMgmtCluster)
+    {
+        if (aPath.mAttributeId == kClusterRevisionId)
+        {
+            return aEncoder.Encode(kGkmClusterRevision);
+        }
+        return CHIP_NO_ERROR;
+    }
+
     return CHIP_NO_ERROR;
 }
 
 void Register()
 {
     static AttrListSanitizer sBasicInfo(kBasicInfoCluster);
+    static AttrListSanitizer sDescriptor(kDescriptorCluster);
     static AttrListSanitizer sTimeSync(kTimeSyncCluster);
     static AttrListSanitizer sIcd(kIcdCluster);
+    static AttrListSanitizer sGkm(kGroupKeyMgmtCluster);
 
     auto & registry = chip::app::AttributeAccessInterfaceRegistry::Instance();
 
@@ -200,6 +284,15 @@ void Register()
     else
     {
         ChipLogProgress(Zcl, "BasicInformation sanitizer registered");
+    }
+
+    if (!registry.Register(&sDescriptor))
+    {
+        ChipLogError(Zcl, "Descriptor sanitizer already registered");
+    }
+    else
+    {
+        ChipLogProgress(Zcl, "Descriptor sanitizer registered");
     }
 
     if (!registry.Register(&sTimeSync))
@@ -218,6 +311,15 @@ void Register()
     else
     {
         ChipLogProgress(Zcl, "ICD sanitizer registered");
+    }
+
+    if (!registry.Register(&sGkm))
+    {
+        ChipLogError(Zcl, "GroupKeyManagement sanitizer already registered");
+    }
+    else
+    {
+        ChipLogProgress(Zcl, "GroupKeyManagement sanitizer registered");
     }
 }
 
