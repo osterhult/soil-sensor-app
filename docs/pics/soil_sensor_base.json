@@ -1,0 +1,11 @@
+{
+  "TIMESYNC.S": true,
+  "TIMESYNC.S.A0000": true,
+  "TIMESYNC.S.A0001": true,
+  "TIMESYNC.S.A0002": true,
+  "TIMESYNC.S.C00": true,
+  "ICDM.S": true,
+  "ICDM.S.A0000": true,
+  "ICDM.S.A0001": true,
+  "ICDM.S.A0002": true
+}

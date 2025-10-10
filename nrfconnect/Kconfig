@@ -57,7 +57,14 @@ config CHIP_WIFI
 
 config CHIP_DEVICE_COUNTRY_CODE
     string "CHIP device country code"
-    default "US"
+    default "SE"
     help
       Two-letter ISO 3166-1 country code reported via the Basic Information
       cluster. Configure this to reflect the device's manufacturing locale.
+
+config SOIL_ENDPOINT
+    bool "Enable Soil Measurement endpoint"
+    default n
+    help
+      Enable the provisional SoilMeasurement endpoint (EP1). Keep disabled for
+      certification builds to avoid advertising provisional clusters.

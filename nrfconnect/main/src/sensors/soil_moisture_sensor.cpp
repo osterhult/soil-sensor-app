@@ -1,20 +1,25 @@
 #include "sensors/soil_moisture_sensor.h"
 
+#include <zephyr/sys/util.h>
+
+#if IS_ENABLED(CONFIG_SOIL_ENDPOINT)
 #include <app-common/zap-generated/cluster-objects.h>
 #include <app/clusters/soil-measurement-server/soil-measurement-cluster.h>
 #include <app/server-cluster/ServerClusterInterfaceRegistry.h>
-#include <data-model-providers/codegen/CodegenDataModelProvider.h>
 #include <crypto/RandUtils.h>
+#include <data-model-providers/codegen/CodegenDataModelProvider.h>
 #include <data-model-providers/codegen/Instance.h>
 #include <lib/core/Optional.h>
 #include <platform/CHIPDeviceLayer.h>
 #include <system/SystemClock.h>
+#endif
 
 namespace sensors
 {
 namespace soil_moisture_sensor
 {
 
+#if IS_ENABLED(CONFIG_SOIL_ENDPOINT)
 namespace
 {
 
@@ -41,9 +46,11 @@ void SoilUpdateTimer(chip::System::Layer * layer, void *)
 }
 
 } // namespace
+#endif // IS_ENABLED(CONFIG_SOIL_ENDPOINT)
 
 void Init()
 {
+#if IS_ENABLED(CONFIG_SOIL_ENDPOINT)
     using LimitsType = chip::app::Clusters::SoilMeasurement::Attributes::SoilMoistureMeasurementLimits::TypeInfo::Type;
     using RangeType  = chip::app::Clusters::Globals::Structs::MeasurementAccuracyRangeStruct::Type;
 
@@ -68,6 +75,7 @@ void Init()
 
     SoilUpdateTimer(nullptr, nullptr);
     (void) chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Milliseconds32(kSoilUpdateMs), SoilUpdateTimer, nullptr);
+#endif
 }
 
 } // namespace soil_moisture_sensor

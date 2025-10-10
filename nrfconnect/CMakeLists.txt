@@ -85,6 +85,10 @@ target_sources(app PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/IdentifyHandler.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/server_runtime.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/SoilDeviceInfoProvider.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/ep0_im_sanitizer.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/ep0_metadata_filter.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/timesync_commands.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/cluster_overrides/identify_rev_override.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/platform/LEDWidget.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/sensors/soil_moisture_sensor.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/sensors/SoilSensorManager.cpp
@@ -96,6 +100,7 @@ target_sources(app PRIVATE
 # App-local includes; ZAP includes are added by chip_configure_data_model()
 target_include_directories(app PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/main/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/main/src
   ${CMAKE_CURRENT_SOURCE_DIR}/main
   ${SOILSENSOR_COMMON}
   ${CHIP_ROOT}/examples/providers

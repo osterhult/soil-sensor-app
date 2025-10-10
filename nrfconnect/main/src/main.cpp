@@ -16,6 +16,8 @@
 #include "cfg/app_config.h"
 #include "connectivity/ble_manager.h"
 #include "matter/access_manager.h"
+#include "matter/ep0_im_sanitizer.h"
+#include "matter/ep0_metadata_filter.h"
 #include "matter/server_runtime.h"
 #include "sensors/soil_moisture_sensor.h"
 #include <platform/nrfconnect/DeviceInstanceInfoProviderImpl.h>
@@ -30,6 +32,7 @@
 #include <lib/core/ErrorStr.h>
 #include <lib/core/CHIPError.h>
 #include <lib/support/logging/CHIPLogging.h>
+#include <zephyr/sys/util.h>
 
 #include <platform/ConfigurationManager.h>
 
@@ -56,6 +59,12 @@ using namespace chip::DeviceLayer;
 
 using chip::FabricIndex;
 using chip::Server;
+
+namespace matter {
+namespace cluster_overrides {
+void RegisterIdentifyRevisionOverride(chip::EndpointId endpoint);
+} // namespace cluster_overrides
+} // namespace matter
 
 
 
@@ -119,7 +128,10 @@ extern "C" int main(void)
         return -3;
     }
     // Provide a data model provider for the server (required by recent CHIP)
-    initParams.dataModelProvider = chip::app::CodegenDataModelProviderInstance(initParams.persistentStorageDelegate);
+    chip::app::DataModel::Provider * baseProvider =
+        chip::app::CodegenDataModelProviderInstance(initParams.persistentStorageDelegate);
+    static matter::ep0::MetadataFilter sMetadataFilter(*baseProvider);
+    initParams.dataModelProvider = &sMetadataFilter;
     initParams.appDelegate       = &matter::access_manager::CommissioningCapacityDelegate();
 
     chip::Server & server = chip::Server::GetInstance();
@@ -127,6 +139,9 @@ extern "C" int main(void)
     err = server.Init(initParams);
 
     if (err != CHIP_NO_ERROR) { LOG_ERR("Matter Server init failed: %ld", (long)err.AsInteger()); return -2; }
+
+    matter::ep0::Register();
+    matter::cluster_overrides::RegisterIdentifyRevisionOverride(/*endpoint=*/1);
 
     matter::server_runtime::InitEventLogging();
     matter::server_runtime::ConfigureDynamicMrp();
@@ -151,7 +166,10 @@ extern "C" int main(void)
     // Do not set RealTime from Last Known Good Time here; CASE session handling
     // will fall back appropriately and update LKG as needed during commissioning.
 
-    sensors::soil_moisture_sensor::Init();
+    if (IS_ENABLED(CONFIG_SOIL_ENDPOINT))
+    {
+        sensors::soil_moisture_sensor::Init();
+    }
 
     // Print device configuration and onboarding codes to UART (like desktop examples)
     ConfigurationMgr().LogDeviceConfig();
