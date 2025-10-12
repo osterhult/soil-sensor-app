@@ -6,7 +6,6 @@
 #include <cinttypes>
 
 #include <platform/CHIPDeviceLayer.h>
-#include <app/server/AppDelegate.h>
 #include <app/server/CommissioningWindowManager.h>
 #include <app/server/Server.h>
 #include <data-model-providers/codegen/Instance.h>
@@ -18,6 +17,8 @@
 #include "matter/access_manager.h"
 #include "matter/ep0_im_sanitizer.h"
 #include "matter/ep0_metadata_filter.h"
+#include "matter/gendiag_attr_access.h"
+#include "matter/ep0_timesync_delegate.h"
 #include "matter/server_runtime.h"
 #include "sensors/soil_moisture_sensor.h"
 #include <platform/nrfconnect/DeviceInstanceInfoProviderImpl.h>
@@ -132,7 +133,6 @@ extern "C" int main(void)
         chip::app::CodegenDataModelProviderInstance(initParams.persistentStorageDelegate);
     static matter::ep0::MetadataFilter sMetadataFilter(*baseProvider);
     initParams.dataModelProvider = &sMetadataFilter;
-    initParams.appDelegate       = &matter::access_manager::CommissioningCapacityDelegate();
 
     chip::Server & server = chip::Server::GetInstance();
 
@@ -140,6 +140,14 @@ extern "C" int main(void)
 
     if (err != CHIP_NO_ERROR) { LOG_ERR("Matter Server init failed: %ld", (long)err.AsInteger()); return -2; }
 
+    if (matter::ep0::RegisterTimeSyncDelegate() != CHIP_NO_ERROR)
+    {
+        ChipLogError(AppServer, "Failed to register TimeSync attribute access override");
+    }
+    if (matter::RegisterGeneralDiagAttrAccess() != CHIP_NO_ERROR)
+    {
+        // Already registered or not critical; ignore to keep commissioning quiet.
+    }
     matter::ep0::Register();
     matter::cluster_overrides::RegisterIdentifyRevisionOverride(/*endpoint=*/1);
 

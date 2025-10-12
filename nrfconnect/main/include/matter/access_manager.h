@@ -1,6 +1,5 @@
 #pragma once
 
-#include <app/server/AppDelegate.h>
 #include <lib/core/CHIPError.h>
 
 namespace chip
@@ -16,8 +15,6 @@ namespace access_manager
 CHIP_ERROR InitManagementClusters();
 void EnsureAccessControlReady();
 void AssertRootAccessControlReady();
-bool EnsureFabricSlot();
-::AppDelegate & CommissioningCapacityDelegate();
 void InitializeFabricHandlers(chip::Server & server);
 CHIP_ERROR DoFullMatterWipe();
 void OpenCommissioningWindowIfNeeded(chip::Server & server);

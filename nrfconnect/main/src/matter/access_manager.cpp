@@ -2,10 +2,10 @@
 
 #include <access/AccessControl.h>
 #include <app/CASESessionManager.h>
+#include <app/FailSafeContext.h>
 #include <app/EventManagement.h>
 #include <app/InteractionModelEngine.h>
 #include <app/reporting/Engine.h>
-#include <app/server/AppDelegate.h>
 #include <app/server/Server.h>
 #include <app/util/attribute-storage.h>
 #include <credentials/FabricTable.h>
@@ -81,139 +81,10 @@ bool IsBenignNotFound(CHIP_ERROR err)
         (err == CHIP_ERROR_KEY_NOT_FOUND);
 }
 
-struct FabricSessionCheckContext
-{
-    chip::FabricIndex fabric;
-    bool hasActive;
-};
-
-bool SessionIteratorForFabric(void * context, chip::SessionHandle & handle)
-{
-    auto * data = static_cast<FabricSessionCheckContext *>(context);
-    if (handle->IsActiveSession() && handle->GetFabricIndex() == data->fabric)
-    {
-        data->hasActive = true;
-        return false;
-    }
-    return true;
-}
-
-bool FabricHasActiveSessions(chip::FabricIndex fabricIndex)
-{
-    FabricSessionCheckContext ctx{ fabricIndex, false };
-    (void) chip::Server::GetInstance().GetSecureSessionManager().ForEachSessionHandle(&ctx, SessionIteratorForFabric);
-    return ctx.hasActive;
-}
-
-bool FabricHasActiveSubscription(chip::FabricIndex fabricIndex)
-{
-    auto * imEngine = chip::app::InteractionModelEngine::GetInstance();
-    return (imEngine != nullptr) && imEngine->FabricHasAtLeastOneActiveSubscription(fabricIndex);
-}
-
-bool TryEvictIdleFabric()
-{
-    auto & server      = chip::Server::GetInstance();
-    auto & fabricTable = server.GetFabricTable();
-
-    for (auto it = fabricTable.begin(); it != fabricTable.end(); ++it)
-    {
-        const chip::FabricInfo & info = *it;
-        if (!info.IsInitialized())
-        {
-            continue;
-        }
-
-        chip::FabricIndex candidate = info.GetFabricIndex();
-        if (FabricHasActiveSessions(candidate) || FabricHasActiveSubscription(candidate))
-        {
-            continue;
-        }
-
-        server.GetSecureSessionManager().ExpireAllSessionsForFabric(candidate);
-        if (auto * resumption = server.GetSessionResumptionStorage(); resumption != nullptr)
-        {
-            (void) resumption->DeleteAll(candidate);
-        }
-        if (auto * groups = server.GetGroupDataProvider(); groups != nullptr)
-        {
-            (void) groups->RemoveFabric(candidate);
-        }
-
-        (void) chip::Access::GetAccessControl().DeleteAllEntriesForFabric(candidate);
-        NotifyAclChanged();
-
-        CHIP_ERROR err = fabricTable.Delete(candidate);
-        if (err != CHIP_NO_ERROR && err != CHIP_ERROR_NOT_FOUND)
-        {
-            ChipLogError(AppServer, "Failed to evict fabric 0x%02x: %s", candidate, chip::ErrorStr(err));
-            return false;
-        }
-
-        ChipLogProgress(AppServer, "Evicted idle fabric 0x%02x to free a slot", candidate);
-        return true;
-    }
-
-    return false;
-}
-
-constexpr chip::NodeId kCaseAdminSubjectId = 0x0000000000000002ULL;
-
 CHIP_ERROR EnsureCaseAdminEntryForFabric(chip::FabricIndex fabricIndex)
 {
-    if (fabricIndex == chip::kUndefinedFabricIndex)
-    {
-        return CHIP_NO_ERROR;
-    }
-
-    auto & accessControl = chip::Access::GetAccessControl();
-
-    size_t entryCount = 0;
-    CHIP_ERROR err    = accessControl.GetEntryCount(fabricIndex, entryCount);
-    if (err != CHIP_NO_ERROR)
-    {
-        ChipLogError(AppServer, "ACL seed: failed to get entry count for fabric 0x%02x: %s", fabricIndex, chip::ErrorStr(err));
-        return err;
-    }
-
-    if (entryCount > 0)
-    {
-        return CHIP_NO_ERROR;
-    }
-
-    chip::Access::AccessControl::Entry newEntry;
-    err = accessControl.PrepareEntry(newEntry);
-    if (err != CHIP_NO_ERROR)
-    {
-        ChipLogError(AppServer, "ACL seed: failed preparing entry for fabric 0x%02x: %s", fabricIndex, chip::ErrorStr(err));
-        return err;
-    }
-
-    (void) newEntry.SetFabricIndex(fabricIndex);
-    (void) newEntry.SetPrivilege(chip::Access::Privilege::kAdminister);
-    (void) newEntry.SetAuthMode(chip::Access::AuthMode::kCase);
-
-    err = newEntry.AddSubject(nullptr, kCaseAdminSubjectId);
-    if (err != CHIP_NO_ERROR)
-    {
-        ChipLogError(AppServer, "ACL seed: failed to add subject for fabric 0x%02x: %s", fabricIndex, chip::ErrorStr(err));
-        return err;
-    }
-
-    size_t newIndex = 0;
-    err             = accessControl.CreateEntry(nullptr, fabricIndex, &newIndex, newEntry);
-    if (err == CHIP_ERROR_INCORRECT_STATE)
-    {
-        return CHIP_NO_ERROR;
-    }
-    if (err != CHIP_NO_ERROR)
-    {
-        ChipLogError(AppServer, "ACL seed: create entry failed for fabric 0x%02x: %s", fabricIndex, chip::ErrorStr(err));
-        return err;
-    }
-
-    ChipLogProgress(AppServer, "ACL seed: created CASE Admin entry for fabric index 0x%02x (ACL index %zu)", fabricIndex, newIndex);
-    NotifyAclChanged();
+    // Rely on the default access control entries created during commissioning.
+    (void) fabricIndex;
     return CHIP_NO_ERROR;
 }
 
@@ -243,15 +114,6 @@ public:
 };
 
 CaseAdminAclFabricDelegate gCaseAdminAclFabricDelegate;
-
-class CommissioningCapacityDelegate final : public ::AppDelegate
-{
-public:
-    void OnCommissioningWindowOpened() override { (void) EnsureFabricSlot(); }
-    void OnCommissioningSessionEstablishmentStarted() override { (void) EnsureFabricSlot(); }
-};
-
-CommissioningCapacityDelegate gCommissioningCapacityDelegate;
 
 } // namespace
 
@@ -283,29 +145,6 @@ void AssertRootAccessControlReady()
 {
     VerifyOrDie(emberAfContainsServer(0, chip::app::Clusters::AccessControl::Id));
     NotifyAclChanged();
-}
-
-bool EnsureFabricSlot()
-{
-    auto & server      = chip::Server::GetInstance();
-    auto & fabricTable = server.GetFabricTable();
-
-    if (fabricTable.FabricCount() < MatterMaxFabrics())
-    {
-        return true;
-    }
-
-    bool evicted = TryEvictIdleFabric();
-    if (!evicted)
-    {
-        ChipLogProgress(AppServer, "No fabric slots available and no idle fabric to evict");
-    }
-    return evicted;
-}
-
-::AppDelegate & CommissioningCapacityDelegate()
-{
-    return gCommissioningCapacityDelegate;
 }
 
 void InitializeFabricHandlers(chip::Server & server)
@@ -351,12 +190,6 @@ void OpenCommissioningWindowIfNeeded(chip::Server & server)
 {
     if (server.GetFabricTable().FabricCount() == 0)
     {
-        if (!EnsureFabricSlot())
-        {
-            LOG_WRN("Unable to free fabric slot before commissioning window");
-            return;
-        }
-
         constexpr auto kDefaultCommissioningTimeout = chip::System::Clock::Seconds32(15 * 60);
         CHIP_ERROR windowErr = server.GetCommissioningWindowManager().OpenBasicCommissioningWindow(kDefaultCommissioningTimeout);
         if (windowErr != CHIP_NO_ERROR)

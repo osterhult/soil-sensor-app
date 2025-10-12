@@ -8,11 +8,14 @@ using namespace chip::app;
 using namespace chip::app::Clusters;
 using namespace chip::Protocols::InteractionModel;
 
+extern "C" bool emberAfTimeSynchronizationClusterSetUTCTimeCallback(
+    CommandHandler * commandObj, const ConcreteCommandPath & commandPath,
+    const TimeSynchronization::Commands::SetUTCTime::DecodableType & commandData);
+
 extern "C" bool emberAfTimeSynchronizationClusterSetUtcTimeCallback(
     CommandHandler * commandObj, const ConcreteCommandPath & commandPath,
     const TimeSynchronization::Commands::SetUTCTime::DecodableType & commandData)
 {
-    // Accept the mandatory SetUtcTime command without modifying a time source.
-    commandObj->AddStatus(commandPath, Status::Success);
-    return true;
+    // Forward legacy lowercase entry point to the shared handler.
+    return emberAfTimeSynchronizationClusterSetUTCTimeCallback(commandObj, commandPath, commandData);
 }

@@ -25,7 +25,6 @@ constexpr chip::EndpointId kSoilEndpoint = 1;
 
 constexpr chip::ClusterId kBasicInfoCluster    = chip::app::Clusters::BasicInformation::Id;
 constexpr chip::ClusterId kDescriptorCluster   = chip::app::Clusters::Descriptor::Id;
-constexpr chip::ClusterId kTimeSyncCluster     = chip::app::Clusters::TimeSynchronization::Id;
 constexpr chip::ClusterId kIcdCluster          = static_cast<chip::ClusterId>(0x0046);
 constexpr chip::ClusterId kGroupKeyMgmtCluster = chip::app::Clusters::GroupKeyManagement::Id;
 
@@ -38,20 +37,16 @@ constexpr chip::AttributeId kAttributeListId    = 0xFFFB;
 constexpr chip::AttributeId kBasicInfoHiddenAttr = 0x0018;
 constexpr chip::AttributeId kBasicInfoUniqueId   = 0x0012;
 
-constexpr chip::AttributeId kTimeSyncUtcTime     = 0x0000;
-constexpr chip::AttributeId kTimeSyncGranularity = 0x0001;
-constexpr chip::AttributeId kTimeSyncTimeSource  = 0x0002;
-
 constexpr chip::AttributeId kIcdIdleModeDuration    = 0x0000;
 constexpr chip::AttributeId kIcdActiveModeDuration  = 0x0001;
 constexpr chip::AttributeId kIcdActiveModeThreshold = 0x0002;
+constexpr chip::AttributeId kIcdRegisteredClients   = 0x0003;
+constexpr chip::AttributeId kIcdIcdCounter          = 0x0004;
 
 constexpr chip::AttributeId kDescriptorDeviceTypeList = 0x0000;
 constexpr chip::AttributeId kDescriptorServerList     = 0x0001;
 constexpr chip::AttributeId kDescriptorClientList     = 0x0002;
 constexpr chip::AttributeId kDescriptorPartsList      = 0x0003;
-
-constexpr chip::CommandId kTimeSyncSetUtcTime = 0x0000;
 
 constexpr uint16_t kIcdClusterRevision  = 3;
 constexpr uint16_t kGkmClusterRevision  = 2;
@@ -90,17 +85,6 @@ CHIP_ERROR EncodeSimpleList(AttributeValueEncoder & aEncoder, const T * values, 
         for (size_t i = 0; i < count; ++i)
         {
             ReturnErrorOnFailure(encoder.Encode(values[i]));
-        }
-        return CHIP_NO_ERROR;
-    });
-}
-
-CHIP_ERROR EncodeCommandList(AttributeValueEncoder & aEncoder, const chip::CommandId * cmds, size_t count)
-{
-    return aEncoder.EncodeList([&](auto && encoder) -> CHIP_ERROR {
-        for (size_t i = 0; i < count; ++i)
-        {
-            ReturnErrorOnFailure(encoder.Encode(cmds[i]));
         }
         return CHIP_NO_ERROR;
     });
@@ -231,36 +215,6 @@ CHIP_ERROR AttrListSanitizer::Read(const ConcreteReadAttributePath & aPath, Attr
         }
     }
 
-    if (mClusterId == kTimeSyncCluster)
-    {
-        switch (aPath.mAttributeId)
-        {
-        case kTimeSyncUtcTime:
-            return aEncoder.EncodeNull();
-        case kTimeSyncGranularity:
-            return aEncoder.Encode(static_cast<uint8_t>(0));
-        case kTimeSyncTimeSource:
-            return aEncoder.Encode(static_cast<uint8_t>(0));
-        case kFeatureMapId:
-            return aEncoder.Encode(static_cast<uint32_t>(0));
-        case kAttributeListId: {
-            constexpr chip::AttributeId kAttributes[] = {
-                kTimeSyncUtcTime, kTimeSyncGranularity, kTimeSyncTimeSource,
-                kGeneratedCmdListId, kAcceptedCmdListId, kFeatureMapId, kClusterRevisionId, kAttributeListId,
-            };
-            return EncodeSimpleList(aEncoder, kAttributes, sizeof(kAttributes) / sizeof(kAttributes[0]));
-        }
-        case kGeneratedCmdListId:
-            return EncodeEmptyList(aEncoder);
-        case kAcceptedCmdListId: {
-            constexpr chip::CommandId kCommands[] = { kTimeSyncSetUtcTime };
-            return EncodeCommandList(aEncoder, kCommands, sizeof(kCommands) / sizeof(kCommands[0]));
-        }
-        default:
-            return CHIP_NO_ERROR;
-        }
-    }
-
     if (mClusterId == kIcdCluster)
     {
         switch (aPath.mAttributeId)
@@ -285,6 +239,9 @@ CHIP_ERROR AttrListSanitizer::Read(const ConcreteReadAttributePath & aPath, Attr
         case kGeneratedCmdListId:
         case kAcceptedCmdListId:
             return EncodeEmptyList(aEncoder);
+        case kIcdRegisteredClients:
+        case kIcdIcdCounter:
+            return CHIP_IM_GLOBAL_STATUS(UnsupportedAttribute);
         default:
             return CHIP_NO_ERROR;
         }
@@ -309,7 +266,6 @@ void Register()
 #if CONFIG_SOIL_ENDPOINT
     static AttrListSanitizer sDescriptorSoil(kSoilEndpoint, kDescriptorCluster);
 #endif
-    static AttrListSanitizer sTimeSync(kEp0, kTimeSyncCluster);
     static AttrListSanitizer sIcd(kEp0, kIcdCluster);
     static AttrListSanitizer sGkm(kEp0, kGroupKeyMgmtCluster);
 
@@ -343,15 +299,6 @@ void Register()
         ChipLogProgress(Zcl, "Descriptor sanitizer registered for soil endpoint");
     }
 #endif
-
-    if (!registry.Register(&sTimeSync))
-    {
-        ChipLogError(Zcl, "TimeSync sanitizer already registered");
-    }
-    else
-    {
-        ChipLogProgress(Zcl, "TimeSync sanitizer registered");
-    }
 
     if (!registry.Register(&sIcd))
     {

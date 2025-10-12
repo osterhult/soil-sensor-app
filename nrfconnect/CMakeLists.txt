@@ -85,8 +85,10 @@ target_sources(app PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/IdentifyHandler.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/server_runtime.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/SoilDeviceInfoProvider.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/gendiag_attr_access.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/ep0_im_sanitizer.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/ep0_metadata_filter.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/ep0_timesync_delegate.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/timesync_commands.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/cluster_overrides/identify_rev_override.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/platform/LEDWidget.cpp
