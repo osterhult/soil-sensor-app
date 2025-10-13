@@ -32,7 +32,6 @@ private:
     TimeSyncDelegate();
 
     chip::Optional<uint64_t> mUtcTime; // chip epoch microseconds
-    chip::app::Clusters::TimeSynchronization::TimeSourceEnum mTimeSource;
 };
 
 CHIP_ERROR RegisterTimeSyncDelegate();

@@ -17,7 +17,6 @@
 #include "matter/access_manager.h"
 #include "matter/ep0_im_sanitizer.h"
 #include "matter/ep0_metadata_filter.h"
-#include "matter/gendiag_attr_access.h"
 #include "matter/ep0_timesync_delegate.h"
 #include "matter/server_runtime.h"
 #include "sensors/soil_moisture_sensor.h"
@@ -34,7 +33,6 @@
 #include <lib/core/CHIPError.h>
 #include <lib/support/logging/CHIPLogging.h>
 #include <zephyr/sys/util.h>
-
 #include <platform/ConfigurationManager.h>
 
 #ifdef CONFIG_PM
@@ -71,6 +69,8 @@ void RegisterIdentifyRevisionOverride(chip::EndpointId endpoint);
 
 // Example DeviceInfo provider instance (used to print onboarding info)
 static chip::DeviceLayer::DeviceInfoProviderImpl gExampleDeviceInfoProvider;
+
+extern "C" void RegisterGenDiagAttrAccess();
 
 extern "C" int main(void)
 {
@@ -144,10 +144,7 @@ extern "C" int main(void)
     {
         ChipLogError(AppServer, "Failed to register TimeSync attribute access override");
     }
-    if (matter::RegisterGeneralDiagAttrAccess() != CHIP_NO_ERROR)
-    {
-        // Already registered or not critical; ignore to keep commissioning quiet.
-    }
+    RegisterGenDiagAttrAccess();
     matter::ep0::Register();
     matter::cluster_overrides::RegisterIdentifyRevisionOverride(/*endpoint=*/1);
 
