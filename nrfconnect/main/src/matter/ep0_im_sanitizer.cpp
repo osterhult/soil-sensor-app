@@ -240,7 +240,7 @@ CHIP_ERROR AttrListSanitizer::Read(const ConcreteReadAttributePath & aPath, Attr
         case kAttributeListId: {
             constexpr chip::AttributeId kAttributes[] = {
                 kIcdIdleModeDuration, kIcdActiveModeDuration, kIcdActiveModeThreshold,
-                kGeneratedCmdListId, kAcceptedCmdListId, kFeatureMapId, kClusterRevisionId, kAttributeListId,
+                kGeneratedCmdListId, kAcceptedCmdListId, kAttributeListId, kFeatureMapId, kClusterRevisionId,
             };
             return EncodeSimpleList(aEncoder, kAttributes, sizeof(kAttributes) / sizeof(kAttributes[0]));
         }

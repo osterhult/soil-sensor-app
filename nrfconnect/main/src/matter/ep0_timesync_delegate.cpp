@@ -85,11 +85,11 @@ CHIP_ERROR TimeSyncDelegate::Read(const chip::app::ConcreteReadAttributePath & p
             UTCTime::Id,
             Granularity::Id,
             TimeSource::Id,
-            FeatureMap::Id,
-            ClusterRevision::Id,
-            AttributeList::Id,
             GeneratedCommandList::Id,
             AcceptedCommandList::Id,
+            AttributeList::Id,
+            FeatureMap::Id,
+            ClusterRevision::Id,
         };
         return EncodeAttributeIdList(encoder, kAttributes, sizeof(kAttributes) / sizeof(kAttributes[0]));
     }
