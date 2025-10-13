@@ -34,8 +34,8 @@ constexpr chip::AttributeId kGeneratedCmdListId = 0xFFF8;
 constexpr chip::AttributeId kAcceptedCmdListId  = 0xFFF9;
 constexpr chip::AttributeId kAttributeListId    = 0xFFFB;
 
-constexpr chip::AttributeId kBasicInfoHiddenAttr = 0x0018;
-constexpr chip::AttributeId kBasicInfoUniqueId   = 0x0012;
+constexpr chip::AttributeId kBasicInfoConfigurationVersion = 0x0018;
+constexpr chip::AttributeId kBasicInfoUniqueId             = 0x0012;
 
 constexpr chip::AttributeId kIcdIdleModeDuration    = 0x0000;
 constexpr chip::AttributeId kIcdActiveModeDuration  = 0x0001;
@@ -115,11 +115,6 @@ CHIP_ERROR AttrListSanitizer::Read(const ConcreteReadAttributePath & aPath, Attr
 
     if (mClusterId == kBasicInfoCluster)
     {
-        if (aPath.mAttributeId == kBasicInfoHiddenAttr)
-        {
-            return CHIP_IM_GLOBAL_STATUS(UnsupportedAttribute);
-        }
-
         if (aPath.mAttributeId == kBasicInfoUniqueId)
         {
             char uniqueId[chip::DeviceLayer::ConfigurationManager::kMaxUniqueIDLength + 1] = {};
@@ -135,11 +130,24 @@ CHIP_ERROR AttrListSanitizer::Read(const ConcreteReadAttributePath & aPath, Attr
             return aEncoder.Encode(chip::CharSpan(kFallbackUniqueId, strlen(kFallbackUniqueId)));
         }
 
+        if (aPath.mAttributeId == kBasicInfoConfigurationVersion)
+        {
+            uint32_t configurationVersion = 0;
+            CHIP_ERROR err                = chip::DeviceLayer::ConfigurationMgr().GetConfigurationVersion(configurationVersion);
+
+            if (err != CHIP_NO_ERROR)
+            {
+                configurationVersion = 1; // Default to spec-required minimum when persistent storage is empty.
+            }
+
+            return aEncoder.Encode(configurationVersion);
+        }
+
         if (aPath.mAttributeId == kAttributeListId)
         {
             constexpr chip::AttributeId kAttributes[] = {
                 0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0006, 0x0007, 0x0008, 0x0009,
-                0x000A, 0x0012, 0x0013, 0x0015, 0x0016,
+                0x000A, 0x0012, 0x0013, 0x0015, 0x0016, kBasicInfoConfigurationVersion,
                 kGeneratedCmdListId, kAcceptedCmdListId, kAttributeListId, kClusterRevisionId,
             };
 

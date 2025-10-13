@@ -83,13 +83,13 @@ CHIP_ERROR TimeSyncDelegate::Read(const chip::app::ConcreteReadAttributePath & p
     case AttributeList::Id: {
         constexpr chip::AttributeId kAttributes[] = {
             UTCTime::Id,
-            TimeSource::Id,
             Granularity::Id,
+            TimeSource::Id,
             FeatureMap::Id,
             ClusterRevision::Id,
             AttributeList::Id,
-            AcceptedCommandList::Id,
             GeneratedCommandList::Id,
+            AcceptedCommandList::Id,
         };
         return EncodeAttributeIdList(encoder, kAttributes, sizeof(kAttributes) / sizeof(kAttributes[0]));
     }
@@ -99,6 +99,9 @@ CHIP_ERROR TimeSyncDelegate::Read(const chip::app::ConcreteReadAttributePath & p
         });
     case GeneratedCommandList::Id:
         return EncodeEmptyList(encoder);
+    case TimeZone::Id:
+    case DSTOffset::Id:
+        return CHIP_IM_GLOBAL_STATUS(UnsupportedAttribute);
     default:
         return CHIP_IM_GLOBAL_STATUS(UnsupportedAttribute);
     }

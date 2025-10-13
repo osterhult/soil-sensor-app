@@ -7,16 +7,18 @@
 namespace matter {
 namespace ep0 {
 namespace {
-constexpr chip::EndpointId kRootEndpoint              = 0;
-constexpr chip::ClusterId kBasicInformationClusterId  = chip::app::Clusters::BasicInformation::Id;
-constexpr chip::AttributeId kConfigurationVersionId   = 0x0018;
+constexpr chip::EndpointId kRootEndpoint             = 0;
+constexpr chip::ClusterId kBasicInformationClusterId = chip::app::Clusters::BasicInformation::Id;
 } // namespace
 
 MetadataFilter::MetadataFilter(chip::app::DataModel::Provider & inner) : mInner(&inner) {}
 
 bool MetadataFilter::ShouldFilter(chip::EndpointId endpointId, chip::ClusterId clusterId, chip::AttributeId attributeId) const
 {
-    return (endpointId == kRootEndpoint) && (clusterId == kBasicInformationClusterId) && (attributeId == kConfigurationVersionId);
+    static_cast<void>(endpointId);
+    static_cast<void>(clusterId);
+    static_cast<void>(attributeId);
+    return false;
 }
 
 CHIP_ERROR MetadataFilter::Startup(chip::app::DataModel::InteractionModelContext context)
