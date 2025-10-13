@@ -50,7 +50,8 @@ TimeSyncDelegate & TimeSyncDelegate::Instance()
 
 TimeSyncDelegate::TimeSyncDelegate() :
     chip::app::AttributeAccessInterface(chip::MakeOptional<chip::EndpointId>(kRootEndpoint),
-                                        chip::app::Clusters::TimeSynchronization::Id)
+                                        chip::app::Clusters::TimeSynchronization::Id),
+    mTimeSource(chip::app::Clusters::TimeSynchronization::TimeSourceEnum::kNone)
 {}
 
 CHIP_ERROR TimeSyncDelegate::Read(const chip::app::ConcreteReadAttributePath & path,
@@ -71,6 +72,8 @@ CHIP_ERROR TimeSyncDelegate::Read(const chip::app::ConcreteReadAttributePath & p
             return encoder.Encode(mUtcTime.Value());
         }
         return encoder.EncodeNull();
+    case TimeSource::Id:
+        return encoder.Encode(static_cast<uint8_t>(mTimeSource));
     case Granularity::Id:
         return encoder.Encode(static_cast<uint8_t>(chip::app::Clusters::TimeSynchronization::GranularityEnum::kNoTimeGranularity));
     case FeatureMap::Id:
@@ -80,6 +83,7 @@ CHIP_ERROR TimeSyncDelegate::Read(const chip::app::ConcreteReadAttributePath & p
     case AttributeList::Id: {
         constexpr chip::AttributeId kAttributes[] = {
             UTCTime::Id,
+            TimeSource::Id,
             Granularity::Id,
             FeatureMap::Id,
             ClusterRevision::Id,
@@ -126,6 +130,10 @@ chip::Protocols::InteractionModel::Status TimeSyncDelegate::HandleSetUtcTimeComm
 
     // Accept the command but avoid writing optional attributes that are not exposed on EP0.
     mUtcTime.SetValue(commandData.UTCTime);
+    const auto & timeSource = commandData.timeSource;
+    mTimeSource             = timeSource.HasValue()
+                        ? timeSource.Value()
+                        : chip::app::Clusters::TimeSynchronization::TimeSourceEnum::kNone;
 
     const uint64_t chipEpochSeconds = commandData.UTCTime / chip::kMicrosecondsPerSecond;
     if (chipEpochSeconds <= UINT32_MAX)
