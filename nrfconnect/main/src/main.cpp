@@ -71,6 +71,8 @@ void RegisterIdentifyRevisionOverride(chip::EndpointId endpoint);
 static chip::DeviceLayer::DeviceInfoProviderImpl gExampleDeviceInfoProvider;
 
 extern "C" void RegisterGenDiagAttrAccess();
+extern "C" void MatterAppPlatform_RevisionSanityCheck();
+extern "C" void MatterAppPlatform_RegisterGkmRevisionOverride();
 
 extern "C" int main(void)
 {
@@ -147,9 +149,12 @@ extern "C" int main(void)
     RegisterGenDiagAttrAccess();
     matter::ep0::Register();
     matter::cluster_overrides::RegisterIdentifyRevisionOverride(/*endpoint=*/1);
+    MatterAppPlatform_RegisterGkmRevisionOverride();
 
     matter::server_runtime::InitEventLogging();
     matter::server_runtime::ConfigureDynamicMrp();
+
+    MatterAppPlatform_RevisionSanityCheck();
 
     CHIP_ERROR managementErr = matter::access_manager::InitManagementClusters();
     if (managementErr != CHIP_NO_ERROR)

@@ -1,8 +1,10 @@
 #include "ep0_metadata_filter.h"
 
+#include <app-common/zap-generated/ids/Attributes.h>
 #include <app-common/zap-generated/ids/Clusters.h>
 #include <app/ConcreteAttributePath.h>
 #include <lib/support/CodeUtils.h>
+#include <protocols/interaction_model/Constants.h>
 
 namespace matter {
 namespace ep0 {
@@ -35,6 +37,21 @@ chip::app::DataModel::ActionReturnStatus
 MetadataFilter::ReadAttribute(const chip::app::DataModel::ReadAttributeRequest & request,
                               chip::app::AttributeValueEncoder & encoder)
 {
+    constexpr chip::EndpointId kGroupKeyMgmtEndpoint = 0;
+    constexpr chip::ClusterId kGroupKeyMgmtCluster   = chip::app::Clusters::GroupKeyManagement::Id;
+    constexpr chip::AttributeId kClusterRevisionId   = chip::app::Clusters::Globals::Attributes::ClusterRevision::Id;
+
+    if ((request.path.mEndpointId == kGroupKeyMgmtEndpoint) && (request.path.mClusterId == kGroupKeyMgmtCluster) &&
+        (request.path.mAttributeId == kClusterRevisionId))
+    {
+        CHIP_ERROR err = encoder.Encode(static_cast<uint16_t>(2));
+        if (err != CHIP_NO_ERROR)
+        {
+            return err;
+        }
+        return chip::Protocols::InteractionModel::Status::Success;
+    }
+
     return mInner->ReadAttribute(request, encoder);
 }
 

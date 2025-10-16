@@ -49,7 +49,6 @@ constexpr chip::AttributeId kDescriptorClientList     = 0x0002;
 constexpr chip::AttributeId kDescriptorPartsList      = 0x0003;
 
 constexpr uint16_t kIcdClusterRevision  = 3;
-constexpr uint16_t kGkmClusterRevision  = 2;
 constexpr uint16_t kDescriptorClusterRevision = 2;
 
 constexpr chip::DeviceTypeId kRootDeviceType       = static_cast<chip::DeviceTypeId>(0x0016);
@@ -255,15 +254,6 @@ CHIP_ERROR AttrListSanitizer::Read(const ConcreteReadAttributePath & aPath, Attr
         }
     }
 
-    if (mClusterId == kGroupKeyMgmtCluster)
-    {
-        if (aPath.mAttributeId == kClusterRevisionId)
-        {
-            return aEncoder.Encode(kGkmClusterRevision);
-        }
-        return CHIP_NO_ERROR;
-    }
-
     return CHIP_NO_ERROR;
 }
 
@@ -275,7 +265,6 @@ void Register()
     static AttrListSanitizer sDescriptorSoil(kSoilEndpoint, kDescriptorCluster);
 #endif
     static AttrListSanitizer sIcd(kEp0, kIcdCluster);
-    static AttrListSanitizer sGkm(kEp0, kGroupKeyMgmtCluster);
 
     auto & registry = chip::app::AttributeAccessInterfaceRegistry::Instance();
 
@@ -315,15 +304,6 @@ void Register()
     else
     {
         ChipLogProgress(Zcl, "ICD sanitizer registered");
-    }
-
-    if (!registry.Register(&sGkm))
-    {
-        ChipLogError(Zcl, "GroupKeyManagement sanitizer already registered");
-    }
-    else
-    {
-        ChipLogProgress(Zcl, "GroupKeyManagement sanitizer registered");
     }
 }
 
