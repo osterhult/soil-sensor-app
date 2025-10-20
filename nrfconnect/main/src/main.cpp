@@ -20,10 +20,8 @@
 #include "matter/ep0_timesync_delegate.h"
 #include "matter/server_runtime.h"
 #include "sensors/soil_moisture_sensor.h"
-#include <platform/nrfconnect/DeviceInstanceInfoProviderImpl.h>
 #include <platform/CHIPDeviceEvent.h>
 #include <platform/internal/BLEManager.h>
-#include <platform/DeviceInstanceInfoProvider.h>
 #include <DeviceInfoProviderImpl.h>
 #include <setup_payload/OnboardingCodesUtil.h>
 #include <credentials/DeviceAttestationCredsProvider.h>
@@ -34,6 +32,13 @@
 #include <lib/support/logging/CHIPLogging.h>
 #include <zephyr/sys/util.h>
 #include <platform/ConfigurationManager.h>
+
+#include <platform/nrfconnect/DeviceInstanceInfoProviderImpl.h>
+#include <platform/DeviceInstanceInfoProvider.h>
+#include <platform/nrfconnect/ConfigurationManagerImpl.h> // for ConfigurationMgrImpl()
+#include <cstring> // for strlen()
+
+
 
 #ifdef CONFIG_PM
 #include <zephyr/pm/pm.h>
@@ -70,6 +75,12 @@ void RegisterIdentifyRevisionOverride(chip::EndpointId endpoint);
 // Example DeviceInfo provider instance (used to print onboarding info)
 static chip::DeviceLayer::DeviceInfoProviderImpl gExampleDeviceInfoProvider;
 
+// Basic Information / Instance info provider (backs HardwareVersion, ProductName, etc.)
+// NOTE: ctor needs a ConfigurationManagerImpl&
+static chip::DeviceLayer::DeviceInstanceInfoProviderImpl gInstanceInfoProvider(
+    static_cast<chip::DeviceLayer::ConfigurationManagerImpl &>(
+        chip::DeviceLayer::ConfigurationMgr()));
+
 extern "C" void RegisterGenDiagAttrAccess();
 extern "C" void MatterAppPlatform_RevisionSanityCheck();
 extern "C" void MatterAppPlatform_RegisterGkmRevisionOverride();
@@ -101,6 +112,9 @@ extern "C" int main(void)
     cfg::app_config::ConfigureBasicInformation();
     DeviceLayer::SetDeviceInfoProvider(&gExampleDeviceInfoProvider);
 
+    // Register the Instance Info provider so Basic Information cluster reads work
+    DeviceLayer::SetDeviceInstanceInfoProvider(&gInstanceInfoProvider);
+
     // Register handlers for factory reset prep and BLE-related platform events
     PlatformMgr().AddEventHandler(::app::factory_reset::FactoryResetEventHandler, 0);
     PlatformMgr().AddEventHandler(connectivity::ble_manager::AppEventHandler, 0);
@@ -115,7 +129,23 @@ extern "C" int main(void)
     // Load Zephyr settings now that CHIP stack (and BT) are initialized.
     cfg::app_config::LoadSettingsIfEnabled();
 
-// (Wi‑Fi commissioning registration moved after Server init)
+    // Ensure Location (country code) is present before first read of BasicInformation/Location.
+    // If nothing is stored yet, seed from Kconfig (CONFIG_CHIP_DEVICE_COUNTRY_CODE).
+    {
+
+        char codeBuf[3] = { 0 }; // 2 chars (ISO-3166-1 alpha-2) + NUL
+        size_t codeLen = 0;
+        CHIP_ERROR ccErr = chip::DeviceLayer::ConfigurationMgr().GetCountryCode(codeBuf, sizeof(codeBuf), codeLen);
+
+        if (ccErr != CHIP_NO_ERROR || codeLen == 0 || codeBuf[0] == '\0') {
+            #ifdef CONFIG_CHIP_DEVICE_COUNTRY_CODE
+                chip::DeviceLayer::ConfigurationMgr().StoreCountryCode(CONFIG_CHIP_DEVICE_COUNTRY_CODE, std::strlen(CONFIG_CHIP_DEVICE_COUNTRY_CODE));
+            #else
+                const char * defCC = "SE";
+                chip::DeviceLayer::ConfigurationMgr().StoreCountryCode(defCC, std::strlen(defCC)); // default for SVE
+            #endif
+        }
+    }
 
     // Use standard CHIP BLE advertising (service data in ADV, name in scan response).
     // Only set a distinctive device name for easier discovery.
