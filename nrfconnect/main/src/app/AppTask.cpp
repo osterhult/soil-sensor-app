@@ -32,6 +32,10 @@
 #include <dk_buttons_and_leds.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#if defined(CONFIG_CHIP_WIFI)
+#include <zephyr/net/net_if.h>
+#include <zephyr/net/wifi_mgmt.h>
+#endif
 
 LOG_MODULE_DECLARE(soil_app, LOG_LEVEL_INF);
 
@@ -84,6 +88,33 @@ FactoryResetLEDsWrapper<1> sFactoryResetLEDs{ { FACTORY_RESET_SIGNAL_LED } };
 bool sIsNetworkProvisioned = false;
 bool sIsNetworkEnabled     = false;
 bool sHaveBLEConnections   = false;
+
+#if defined(CONFIG_CHIP_WIFI)
+bool sWifiPowerSaveDisabled = false;
+
+static void DisableWifiPowerSave()
+{
+    struct net_if * iface = net_if_get_default();
+    if (iface == nullptr)
+    {
+        LOG_WRN("Default Wi-Fi interface not ready; cannot disable power save yet");
+        return;
+    }
+
+    struct wifi_ps_params ps = {};
+    ps.enabled               = WIFI_PS_DISABLED;
+
+    int ret = net_mgmt(NET_REQUEST_WIFI_PS, iface, &ps, sizeof(ps));
+    if (ret != 0)
+    {
+        LOG_WRN("Failed to disable Wi-Fi power save (ret=%d)", ret);
+        return;
+    }
+
+    LOG_INF("Wi-Fi power save disabled");
+    sWifiPowerSaveDisabled = true;
+}
+#endif
 
 K_THREAD_STACK_DEFINE(sAppTaskStackArea, kAppTaskStackSize);
 struct k_thread sAppTaskThread;
@@ -331,6 +362,19 @@ void AppTask::ChipEventHandler(const ChipDeviceEvent * event, intptr_t)
     case DeviceEventType::kWiFiConnectivityChange:
         sIsNetworkProvisioned = ConnectivityMgr().IsWiFiStationProvisioned();
         sIsNetworkEnabled     = ConnectivityMgr().IsWiFiStationConnected();
+#if defined(CONFIG_CHIP_WIFI)
+        if (sIsNetworkEnabled)
+        {
+            if (!sWifiPowerSaveDisabled)
+            {
+                DisableWifiPowerSave();
+            }
+        }
+        else
+        {
+            sWifiPowerSaveDisabled = false;
+        }
+#endif
         UpdateStatusLED();
         break;
     case DeviceEventType::kThreadStateChange:

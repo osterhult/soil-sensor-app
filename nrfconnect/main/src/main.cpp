@@ -23,7 +23,10 @@
 #include <platform/CHIPDeviceEvent.h>
 #include <platform/internal/BLEManager.h>
 #include <DeviceInfoProviderImpl.h>
+#include <lib/core/Optional.h>
+#include <messaging/ReliableMessageProtocolConfig.h>
 #include <setup_payload/OnboardingCodesUtil.h>
+#include <transport/Session.h>
 #include <credentials/DeviceAttestationCredsProvider.h>
 #include <credentials/examples/DeviceAttestationCredsExample.h>
 #include <credentials/FabricTable.h>
@@ -84,6 +87,53 @@ static chip::DeviceLayer::DeviceInstanceInfoProviderImpl gInstanceInfoProvider(
 extern "C" void RegisterGenDiagAttrAccess();
 extern "C" void MatterAppPlatform_RevisionSanityCheck();
 extern "C" void MatterAppPlatform_RegisterGkmRevisionOverride();
+
+struct MrpTuningParams
+{
+    chip::System::Clock::Milliseconds32 idle;
+    chip::System::Clock::Milliseconds32 active;
+};
+
+static bool ApplyMrpTimingsToSession(void * context, chip::SessionHandle & sessionHandle)
+{
+    auto * params = static_cast<const MrpTuningParams *>(context);
+    if (params == nullptr)
+    {
+        return true;
+    }
+
+    auto * secureSession = sessionHandle->AsSecureSession();
+    if (secureSession == nullptr)
+    {
+        return true;
+    }
+
+    auto sessionParams = secureSession->GetRemoteSessionParameters();
+    sessionParams.SetMRPIdleRetransTimeout(params->idle);
+    sessionParams.SetMRPActiveRetransTimeout(params->active);
+    secureSession->SetRemoteSessionParameters(sessionParams);
+    return true;
+}
+
+static void TuneMrpTimings()
+{
+    constexpr chip::System::Clock::Milliseconds32 kIdle{ 700 };
+    constexpr chip::System::Clock::Milliseconds32 kActive{ 400 };
+
+#if CHIP_DEVICE_CONFIG_ENABLE_DYNAMIC_MRP_CONFIG
+    chip::Messaging::ReliableMessageProtocolConfig localCfg = chip::Messaging::GetDefaultMRPConfig();
+    localCfg.mIdleRetransTimeout   = kIdle;
+    localCfg.mActiveRetransTimeout = kActive;
+
+    chip::Optional<chip::Messaging::ReliableMessageProtocolConfig> overrideCfg;
+    overrideCfg.Emplace(localCfg);
+    (void) chip::Messaging::ReliableMessageProtocolConfig::SetLocalMRPConfig(overrideCfg);
+#endif
+
+    const MrpTuningParams params{ kIdle, kActive };
+    (void) Server::GetInstance().GetSecureSessionManager().ForEachSessionHandle(const_cast<MrpTuningParams *>(&params),
+                                                                                ApplyMrpTimingsToSession);
+}
 
 extern "C" int main(void)
 {
@@ -171,6 +221,8 @@ extern "C" int main(void)
     err = server.Init(initParams);
 
     if (err != CHIP_NO_ERROR) { LOG_ERR("Matter Server init failed: %ld", (long)err.AsInteger()); return -2; }
+
+    TuneMrpTimings();
 
     if (matter::ep0::RegisterTimeSyncDelegate() != CHIP_NO_ERROR)
     {
