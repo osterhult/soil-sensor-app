@@ -2,7 +2,8 @@ cmake_minimum_required(VERSION 3.20.0)
 
 # === Paths ===
 # Absolute CHIP checkout (upstream)
-set(CHIP_ROOT "/Users/osterhult/Kod/Matter/connectedhomeip" CACHE PATH "")
+# set(CHIP_ROOT "/Users/osterhult/Kod/Matter/connectedhomeip" CACHE PATH "")
+set(CHIP_ROOT "/Users/osterhult/Kod/Matter/connectedhomeip_stable" CACHE PATH "")
 get_filename_component(CHIP_ROOT "${CHIP_ROOT}" REALPATH)
 message(STATUS "CHIP_ROOT = ${CHIP_ROOT}")
 
