@@ -42,6 +42,7 @@
 #include <platform/nrfconnect/ConfigurationManagerImpl.h> // for ConfigurationMgrImpl()
 #include <cstring> // for strlen()
 
+extern "C" void RegisterGenCommAttrBlocker();
 
 
 #ifdef CONFIG_PM
@@ -223,6 +224,8 @@ extern "C" int main(void)
     err = server.Init(initParams);
 
     if (err != CHIP_NO_ERROR) { LOG_ERR("Matter Server init failed: %ld", (long)err.AsInteger()); return -2; }
+
+    RegisterGenCommAttrBlocker();
 
     ChipLogProgress(AppServer, "Matter Server started - logging StartUp event");
     AppTask::Instance().OnMatterServerStarted();

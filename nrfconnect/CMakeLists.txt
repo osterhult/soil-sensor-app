@@ -80,6 +80,7 @@ target_sources(app PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/app/AppTask.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/app/AppEvent.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/app/factory_reset.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/main/src/app/GenCommAttrBlocker.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/cfg/app_config.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/connectivity/ble_manager.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/access_manager.cpp
