@@ -12,6 +12,7 @@
 #include "matter/SoilDeviceInfoProvider.h"
 #include "app/AppTask.h"
 #include "app/factory_reset.h"
+#include "app/icdm/IcdmAttrAccess.h"
 #include "cfg/app_config.h"
 #include "connectivity/ble_manager.h"
 #include "matter/access_manager.h"
@@ -87,7 +88,6 @@ static chip::DeviceLayer::DeviceInstanceInfoProviderImpl gInstanceInfoProvider(
 extern "C" void RegisterGenDiagAttrAccess();
 extern "C" void MatterAppPlatform_RevisionSanityCheck();
 extern "C" void MatterAppPlatform_RegisterGkmRevisionOverride();
-
 struct MrpTuningParams
 {
     chip::System::Clock::Milliseconds32 idle;
@@ -217,6 +217,8 @@ extern "C" int main(void)
     initParams.dataModelProvider = &sMetadataFilter;
 
     chip::Server & server = chip::Server::GetInstance();
+
+    AppInit_RegisterIcdmAttrAccess();
 
     err = server.Init(initParams);
 

@@ -87,6 +87,7 @@ target_sources(app PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/server_runtime.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/SoilDeviceInfoProvider.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/gendiag_attr_access.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/main/src/app/icdm/IcdmAttrAccess.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/ep0_im_sanitizer.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/gkm_revision_override.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/ep0_revision_guard.cpp
