@@ -224,6 +224,9 @@ extern "C" int main(void)
 
     if (err != CHIP_NO_ERROR) { LOG_ERR("Matter Server init failed: %ld", (long)err.AsInteger()); return -2; }
 
+    ChipLogProgress(AppServer, "Matter Server started - logging StartUp event");
+    AppTask::Instance().OnMatterServerStarted();
+
     TuneMrpTimings();
 
     if (matter::ep0::RegisterTimeSyncDelegate() != CHIP_NO_ERROR)

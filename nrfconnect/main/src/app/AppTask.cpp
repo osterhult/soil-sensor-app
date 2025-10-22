@@ -23,9 +23,12 @@
 #include "LEDUtil.h"
 #include "matter/IdentifyHandler.h"
 
+#include <app-common/zap-generated/cluster-objects.h>
+#include <app/EventLogging.h>
 #include <app/server/Server.h>
 #include <lib/support/CodeUtils.h>
 #include <lib/support/logging/CHIPLogging.h>
+#include <lib/core/ErrorStr.h>
 #include <platform/ConnectivityManager.h>
 #include <system/SystemError.h>
 
@@ -120,6 +123,20 @@ K_THREAD_STACK_DEFINE(sAppTaskStackArea, kAppTaskStackSize);
 struct k_thread sAppTaskThread;
 
 } // namespace
+
+void AppTask::OnMatterServerStarted()
+{
+    uint32_t swVer = 0;
+    DeviceLayer::ConfigurationMgr().GetSoftwareVersion(swVer);
+    chip::app::Clusters::BasicInformation::Events::StartUp::Type ev;
+    ev.softwareVersion = swVer;
+    chip::EventNumber eventNumber = 0;
+    CHIP_ERROR err                = chip::app::LogEvent(ev, /*endpoint=*/0, eventNumber);
+    if (err != CHIP_NO_ERROR)
+    {
+        ChipLogError(AppServer, "Failed to emit StartUp event: %s", chip::ErrorStr(err));
+    }
+}
 
 CHIP_ERROR AppTask::Init()
 {
