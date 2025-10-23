@@ -28,7 +28,7 @@ void ConfigureDynamicMrp()
 {
 #if CHIP_DEVICE_CONFIG_ENABLE_DYNAMIC_MRP_CONFIG
     using namespace chip::System::Clock::Literals;
-    chip::Messaging::ReliableMessageProtocolConfig mrpConfig(2000_ms32, 300_ms32);
+    chip::Messaging::ReliableMessageProtocolConfig mrpConfig(700_ms32, 400_ms32);
     auto mrpOverride = chip::MakeOptional(mrpConfig);
     (void) chip::Messaging::ReliableMessageProtocolConfig::SetLocalMRPConfig(mrpOverride);
 #endif

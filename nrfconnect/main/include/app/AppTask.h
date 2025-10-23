@@ -39,6 +39,8 @@ public:
 
     static void PostEvent(const AppEvent & event);
 
+    void OnMatterServerStarted();
+
 private:
     static void AppTaskMain(void * pv, void *, void *);
     static void DispatchEvent(const AppEvent & event);

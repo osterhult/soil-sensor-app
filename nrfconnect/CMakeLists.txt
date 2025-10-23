@@ -2,7 +2,8 @@ cmake_minimum_required(VERSION 3.20.0)
 
 # === Paths ===
 # Absolute CHIP checkout (upstream)
-set(CHIP_ROOT "/Users/osterhult/Kod/Matter/connectedhomeip" CACHE PATH "")
+# set(CHIP_ROOT "/Users/osterhult/Kod/Matter/connectedhomeip" CACHE PATH "")
+set(CHIP_ROOT "/Users/osterhult/Kod/Matter/connectedhomeip_stable" CACHE PATH "")
 get_filename_component(CHIP_ROOT "${CHIP_ROOT}" REALPATH)
 message(STATUS "CHIP_ROOT = ${CHIP_ROOT}")
 
@@ -20,6 +21,22 @@ include(${CHIP_ROOT}/config/nrfconnect/app/check-nrfconnect-version.cmake)
 
 # Register CHIP as an extra Zephyr module (NO Nordic matter module)
 list(APPEND ZEPHYR_EXTRA_MODULES ${CHIP_ROOT}/config/nrfconnect/chip-module)
+
+# Ensure zephyr_module.py sees CHIP's module dependencies even in non-west builds.
+get_filename_component(_MATTER_SANDBOX_ROOT "${CHIP_ROOT}/.." REALPATH)
+set(_NCS_ROOT "${_MATTER_SANDBOX_ROOT}/ncs/ncs_stable")
+if(EXISTS "${_NCS_ROOT}/nrfxlib")
+  list(APPEND ZEPHYR_EXTRA_MODULES "${_NCS_ROOT}/nrfxlib")
+endif()
+if(EXISTS "${_NCS_ROOT}/modules/lib/openthread")
+  list(APPEND ZEPHYR_EXTRA_MODULES "${_NCS_ROOT}/modules/lib/openthread")
+endif()
+if(EXISTS "${_NCS_ROOT}/modules/hal/nordic")
+  list(APPEND ZEPHYR_EXTRA_MODULES "${_NCS_ROOT}/modules/hal/nordic")
+endif()
+if(EXISTS "${_NCS_ROOT}/zephyr" AND NOT DEFINED ENV{ZEPHYR_BASE})
+  set(ENV{ZEPHYR_BASE} "${_NCS_ROOT}/zephyr")
+endif()
 
 # Use Nordic’s Zephyr (as installed by NCS). Do NOT override it.
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
@@ -79,6 +96,7 @@ target_sources(app PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/app/AppTask.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/app/AppEvent.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/app/factory_reset.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/main/src/app/GenCommAttrBlocker.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/cfg/app_config.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/connectivity/ble_manager.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/access_manager.cpp
@@ -86,6 +104,7 @@ target_sources(app PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/server_runtime.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/SoilDeviceInfoProvider.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/gendiag_attr_access.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/main/src/app/icdm/IcdmAttrAccess.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/ep0_im_sanitizer.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/gkm_revision_override.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main/src/matter/ep0_revision_guard.cpp

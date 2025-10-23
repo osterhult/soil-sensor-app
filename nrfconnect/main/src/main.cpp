@@ -12,6 +12,7 @@
 #include "matter/SoilDeviceInfoProvider.h"
 #include "app/AppTask.h"
 #include "app/factory_reset.h"
+#include "app/icdm/IcdmAttrAccess.h"
 #include "cfg/app_config.h"
 #include "connectivity/ble_manager.h"
 #include "matter/access_manager.h"
@@ -20,12 +21,13 @@
 #include "matter/ep0_timesync_delegate.h"
 #include "matter/server_runtime.h"
 #include "sensors/soil_moisture_sensor.h"
-#include <platform/nrfconnect/DeviceInstanceInfoProviderImpl.h>
 #include <platform/CHIPDeviceEvent.h>
 #include <platform/internal/BLEManager.h>
-#include <platform/DeviceInstanceInfoProvider.h>
 #include <DeviceInfoProviderImpl.h>
+#include <lib/core/Optional.h>
+#include <messaging/ReliableMessageProtocolConfig.h>
 #include <setup_payload/OnboardingCodesUtil.h>
+#include <transport/Session.h>
 #include <credentials/DeviceAttestationCredsProvider.h>
 #include <credentials/examples/DeviceAttestationCredsExample.h>
 #include <credentials/FabricTable.h>
@@ -34,6 +36,14 @@
 #include <lib/support/logging/CHIPLogging.h>
 #include <zephyr/sys/util.h>
 #include <platform/ConfigurationManager.h>
+
+#include <platform/nrfconnect/DeviceInstanceInfoProviderImpl.h>
+#include <platform/DeviceInstanceInfoProvider.h>
+#include <platform/nrfconnect/ConfigurationManagerImpl.h> // for ConfigurationMgrImpl()
+#include <cstring> // for strlen()
+
+extern "C" void RegisterGenCommAttrBlocker();
+
 
 #ifdef CONFIG_PM
 #include <zephyr/pm/pm.h>
@@ -70,9 +80,61 @@ void RegisterIdentifyRevisionOverride(chip::EndpointId endpoint);
 // Example DeviceInfo provider instance (used to print onboarding info)
 static chip::DeviceLayer::DeviceInfoProviderImpl gExampleDeviceInfoProvider;
 
+// Basic Information / Instance info provider (backs HardwareVersion, ProductName, etc.)
+// NOTE: ctor needs a ConfigurationManagerImpl&
+static chip::DeviceLayer::DeviceInstanceInfoProviderImpl gInstanceInfoProvider(
+    static_cast<chip::DeviceLayer::ConfigurationManagerImpl &>(
+        chip::DeviceLayer::ConfigurationMgr()));
+
 extern "C" void RegisterGenDiagAttrAccess();
 extern "C" void MatterAppPlatform_RevisionSanityCheck();
 extern "C" void MatterAppPlatform_RegisterGkmRevisionOverride();
+struct MrpTuningParams
+{
+    chip::System::Clock::Milliseconds32 idle;
+    chip::System::Clock::Milliseconds32 active;
+};
+
+static bool ApplyMrpTimingsToSession(void * context, chip::SessionHandle & sessionHandle)
+{
+    auto * params = static_cast<const MrpTuningParams *>(context);
+    if (params == nullptr)
+    {
+        return true;
+    }
+
+    auto * secureSession = sessionHandle->AsSecureSession();
+    if (secureSession == nullptr)
+    {
+        return true;
+    }
+
+    auto sessionParams = secureSession->GetRemoteSessionParameters();
+    sessionParams.SetMRPIdleRetransTimeout(params->idle);
+    sessionParams.SetMRPActiveRetransTimeout(params->active);
+    secureSession->SetRemoteSessionParameters(sessionParams);
+    return true;
+}
+
+static void TuneMrpTimings()
+{
+    constexpr chip::System::Clock::Milliseconds32 kIdle{ 700 };
+    constexpr chip::System::Clock::Milliseconds32 kActive{ 400 };
+
+#if CHIP_DEVICE_CONFIG_ENABLE_DYNAMIC_MRP_CONFIG
+    chip::Messaging::ReliableMessageProtocolConfig localCfg = chip::Messaging::GetDefaultMRPConfig();
+    localCfg.mIdleRetransTimeout   = kIdle;
+    localCfg.mActiveRetransTimeout = kActive;
+
+    chip::Optional<chip::Messaging::ReliableMessageProtocolConfig> overrideCfg;
+    overrideCfg.Emplace(localCfg);
+    (void) chip::Messaging::ReliableMessageProtocolConfig::SetLocalMRPConfig(overrideCfg);
+#endif
+
+    const MrpTuningParams params{ kIdle, kActive };
+    (void) Server::GetInstance().GetSecureSessionManager().ForEachSessionHandle(const_cast<MrpTuningParams *>(&params),
+                                                                                ApplyMrpTimingsToSession);
+}
 
 extern "C" int main(void)
 {
@@ -101,6 +163,9 @@ extern "C" int main(void)
     cfg::app_config::ConfigureBasicInformation();
     DeviceLayer::SetDeviceInfoProvider(&gExampleDeviceInfoProvider);
 
+    // Register the Instance Info provider so Basic Information cluster reads work
+    DeviceLayer::SetDeviceInstanceInfoProvider(&gInstanceInfoProvider);
+
     // Register handlers for factory reset prep and BLE-related platform events
     PlatformMgr().AddEventHandler(::app::factory_reset::FactoryResetEventHandler, 0);
     PlatformMgr().AddEventHandler(connectivity::ble_manager::AppEventHandler, 0);
@@ -115,7 +180,23 @@ extern "C" int main(void)
     // Load Zephyr settings now that CHIP stack (and BT) are initialized.
     cfg::app_config::LoadSettingsIfEnabled();
 
-// (Wi‑Fi commissioning registration moved after Server init)
+    // Ensure Location (country code) is present before first read of BasicInformation/Location.
+    // If nothing is stored yet, seed from Kconfig (CONFIG_CHIP_DEVICE_COUNTRY_CODE).
+    {
+
+        char codeBuf[3] = { 0 }; // 2 chars (ISO-3166-1 alpha-2) + NUL
+        size_t codeLen = 0;
+        CHIP_ERROR ccErr = chip::DeviceLayer::ConfigurationMgr().GetCountryCode(codeBuf, sizeof(codeBuf), codeLen);
+
+        if (ccErr != CHIP_NO_ERROR || codeLen == 0 || codeBuf[0] == '\0') {
+            #ifdef CONFIG_CHIP_DEVICE_COUNTRY_CODE
+                chip::DeviceLayer::ConfigurationMgr().StoreCountryCode(CONFIG_CHIP_DEVICE_COUNTRY_CODE, std::strlen(CONFIG_CHIP_DEVICE_COUNTRY_CODE));
+            #else
+                const char * defCC = "SE";
+                chip::DeviceLayer::ConfigurationMgr().StoreCountryCode(defCC, std::strlen(defCC)); // default for SVE
+            #endif
+        }
+    }
 
     // Use standard CHIP BLE advertising (service data in ADV, name in scan response).
     // Only set a distinctive device name for easier discovery.
@@ -138,9 +219,18 @@ extern "C" int main(void)
 
     chip::Server & server = chip::Server::GetInstance();
 
+    AppInit_RegisterIcdmAttrAccess();
+
     err = server.Init(initParams);
 
     if (err != CHIP_NO_ERROR) { LOG_ERR("Matter Server init failed: %ld", (long)err.AsInteger()); return -2; }
+
+    RegisterGenCommAttrBlocker();
+
+    ChipLogProgress(AppServer, "Matter Server started - logging StartUp event");
+    AppTask::Instance().OnMatterServerStarted();
+
+    TuneMrpTimings();
 
     if (matter::ep0::RegisterTimeSyncDelegate() != CHIP_NO_ERROR)
     {

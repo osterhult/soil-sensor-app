@@ -23,15 +23,22 @@
 #include "LEDUtil.h"
 #include "matter/IdentifyHandler.h"
 
+#include <app-common/zap-generated/cluster-objects.h>
+#include <app/EventLogging.h>
 #include <app/server/Server.h>
 #include <lib/support/CodeUtils.h>
 #include <lib/support/logging/CHIPLogging.h>
+#include <lib/core/ErrorStr.h>
 #include <platform/ConnectivityManager.h>
 #include <system/SystemError.h>
 
 #include <dk_buttons_and_leds.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#if defined(CONFIG_CHIP_WIFI)
+#include <zephyr/net/net_if.h>
+#include <zephyr/net/wifi_mgmt.h>
+#endif
 
 LOG_MODULE_DECLARE(soil_app, LOG_LEVEL_INF);
 
@@ -85,10 +92,51 @@ bool sIsNetworkProvisioned = false;
 bool sIsNetworkEnabled     = false;
 bool sHaveBLEConnections   = false;
 
+#if defined(CONFIG_CHIP_WIFI)
+bool sWifiPowerSaveDisabled = false;
+
+static void DisableWifiPowerSave()
+{
+    struct net_if * iface = net_if_get_default();
+    if (iface == nullptr)
+    {
+        LOG_WRN("Default Wi-Fi interface not ready; cannot disable power save yet");
+        return;
+    }
+
+    struct wifi_ps_params ps = {};
+    ps.enabled               = WIFI_PS_DISABLED;
+
+    int ret = net_mgmt(NET_REQUEST_WIFI_PS, iface, &ps, sizeof(ps));
+    if (ret != 0)
+    {
+        LOG_WRN("Failed to disable Wi-Fi power save (ret=%d)", ret);
+        return;
+    }
+
+    LOG_INF("Wi-Fi power save disabled");
+    sWifiPowerSaveDisabled = true;
+}
+#endif
+
 K_THREAD_STACK_DEFINE(sAppTaskStackArea, kAppTaskStackSize);
 struct k_thread sAppTaskThread;
 
 } // namespace
+
+void AppTask::OnMatterServerStarted()
+{
+    uint32_t swVer = 0;
+    DeviceLayer::ConfigurationMgr().GetSoftwareVersion(swVer);
+    chip::app::Clusters::BasicInformation::Events::StartUp::Type ev;
+    ev.softwareVersion = swVer;
+    chip::EventNumber eventNumber = 0;
+    CHIP_ERROR err                = chip::app::LogEvent(ev, /*endpoint=*/0, eventNumber);
+    if (err != CHIP_NO_ERROR)
+    {
+        ChipLogError(AppServer, "Failed to emit StartUp event: %s", chip::ErrorStr(err));
+    }
+}
 
 CHIP_ERROR AppTask::Init()
 {
@@ -331,6 +379,19 @@ void AppTask::ChipEventHandler(const ChipDeviceEvent * event, intptr_t)
     case DeviceEventType::kWiFiConnectivityChange:
         sIsNetworkProvisioned = ConnectivityMgr().IsWiFiStationProvisioned();
         sIsNetworkEnabled     = ConnectivityMgr().IsWiFiStationConnected();
+#if defined(CONFIG_CHIP_WIFI)
+        if (sIsNetworkEnabled)
+        {
+            if (!sWifiPowerSaveDisabled)
+            {
+                DisableWifiPowerSave();
+            }
+        }
+        else
+        {
+            sWifiPowerSaveDisabled = false;
+        }
+#endif
         UpdateStatusLED();
         break;
     case DeviceEventType::kThreadStateChange:
